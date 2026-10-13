@@ -18,10 +18,10 @@ function workspaceTokenUri(): vscode.Uri | undefined {
   return vscode.Uri.joinPath(folder.uri, ...REL_TOKEN);
 }
 
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+function withTimeout<T>(p: PromiseLike<T>, ms: number): Promise<T> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error('timeout')), ms);
-    p.then(
+    Promise.resolve(p).then(
       (v) => {
         clearTimeout(t);
         resolve(v);
