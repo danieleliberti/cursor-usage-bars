@@ -1,8 +1,8 @@
 # Cursor Usage Bars
 
-Unofficial VS Code / Cursor extension by **Daniele Liberti**.
+**Author: Daniele Liberti**
 
-Shows your **plan name** (Pro, Pro+, Ultra, …) and a **usage sparkline** in the status bar. Hover for a 7D / 15D / 30D breakdown with dashboard-colored columns. Opens the [usage dashboard](https://cursor.com/dashboard/usage) on click.
+Unofficial VS Code / Cursor extension. Shows your **plan name** (Pro, Pro+, Ultra, …) and a **usage sparkline** in the status bar. Hover for a 7D / 15D / 30D breakdown with dashboard-colored columns and a gray **│** marker at plan cycle start. Opens the [usage dashboard](https://cursor.com/dashboard/usage) on click.
 
 Within the included plan, the status bar never shows a dollar amount. On-demand charges are reported only when Cursor’s usage-summary says so.
 
@@ -10,6 +10,7 @@ Within the included plan, the status bar never shows a dollar amount. On-demand 
 
 - Plan label on the status bar
 - Colored daily columns (Cursor Usage palette)
+- Gray vertical marker at billing / plan cycle start
 - Range picker in the tooltip: **7D · 15D · 30D**
 - Local + Remote SSH (UI host syncs the login token)
 
