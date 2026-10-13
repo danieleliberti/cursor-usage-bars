@@ -1,0 +1,84 @@
+{
+  "name": "cursor-usage-bars",
+  "displayName": "Cursor Usage Bars",
+  "description": "Status bar sparkline of Cursor spend (D-2, D-1, today). Auto auth from Cursor login. Works in Local and Remote SSH.",
+  "version": "0.3.0",
+  "publisher": "sgh",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0",
+    "node": ">=20.19.0"
+  },
+  "categories": ["Other"],
+  "keywords": ["cursor", "usage", "status bar", "spend", "tokens", "remote", "ssh"],
+  "activationEvents": ["onStartupFinished"],
+  "extensionKind": ["ui", "workspace"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "cursorUsageBars.refresh",
+        "title": "Cursor Usage Bars: Refresh"
+      },
+      {
+        "command": "cursorUsageBars.openDashboard",
+        "title": "Cursor Usage Bars: Open Usage Dashboard"
+      },
+      {
+        "command": "cursorUsageBars.authStatus",
+        "title": "Cursor Usage Bars: Auth Status"
+      },
+      {
+        "command": "cursorUsageBars.setToken",
+        "title": "Cursor Usage Bars: Set Access Token (fallback)"
+      },
+      {
+        "command": "cursorUsageBars.clearToken",
+        "title": "Cursor Usage Bars: Clear Access Token"
+      }
+    ],
+    "configuration": {
+      "title": "Cursor Usage Bars",
+      "properties": {
+        "cursorUsageBars.apiBaseUrl": {
+          "type": "string",
+          "default": "https://api2.cursor.sh",
+          "description": "HTTPS base URL for Cursor usage API."
+        },
+        "cursorUsageBars.pollIntervalSeconds": {
+          "type": "number",
+          "default": 300,
+          "minimum": 60,
+          "description": "Background refresh interval in seconds (minimum 60)."
+        },
+        "cursorUsageBars.manualMonthlyLimitDollars": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Override monthly limit in USD. 0 = use Cursor-reported limit."
+        },
+        "cursorUsageBars.dashboardUrl": {
+          "type": "string",
+          "default": "https://cursor.com/dashboard/usage",
+          "description": "URL opened when clicking the status bar item."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run clean && npm run compile",
+    "clean": "node -e \"require('fs').rmSync('out',{recursive:true,force:true})\"",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.0",
+    "typescript": "^5.6.3"
+  },
+  "dependencies": {
+    "sql.js": "^1.11.0"
+  }
+}

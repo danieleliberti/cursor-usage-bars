@@ -1,0 +1,19 @@
+.vscode/**
+.vscode-test/**
+src/**
+.gitignore
+**/tsconfig.json
+**/*.map
+**/*.ts
+**/*.md
+!README.md
+*.vsix
+
+# Keep only the sql.js bits we load at runtime
+node_modules/**
+!node_modules/sql.js/
+!node_modules/sql.js/package.json
+!node_modules/sql.js/LICENSE
+!node_modules/sql.js/dist/
+!node_modules/sql.js/dist/sql-wasm.js
+!node_modules/sql.js/dist/sql-wasm.wasm
