@@ -2,18 +2,24 @@
   "name": "cursor-usage-bars",
   "displayName": "Cursor Usage Bars",
   "description": "Status bar sparkline of Cursor spend with 7D / 15D / 30D popup range. Auto auth from Cursor login. Works in Local and Remote SSH.",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "publisher": "danieleliberti",
   "author": {
     "name": "Daniele Liberti"
   },
   "license": "MIT",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#FCFCFC",
+    "theme": "light"
+  },
   "engines": {
     "vscode": "^1.85.0",
     "node": ">=20.19.0"
   },
   "categories": [
-    "Other"
+    "Other",
+    "Visualization"
   ],
   "keywords": [
     "cursor",
@@ -102,12 +108,15 @@
     "clean": "node -e \"require('fs').rmSync('out',{recursive:true,force:true})\"",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "vsce package"
+    "package": "vsce package",
+    "publish:marketplace": "vsce publish",
+    "publish:openvsx": "ovsx publish"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^3.2.0",
+    "ovsx": "^0.10.1",
     "typescript": "^5.6.3"
   },
   "dependencies": {
