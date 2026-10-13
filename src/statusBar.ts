@@ -5,7 +5,8 @@ import {
   chartLegendHtml,
   dayBarValue,
   formatCentsUsd,
-  renderBaselineChartHtml,
+  renderBaselineChartMarkdown,
+  renderFallbackSparklineHtml,
   sparkline,
   type DayRange,
   type UsageSnapshot,
@@ -118,10 +119,15 @@ export class UsageBarsStatusBar {
     md.appendMarkdown(`**Range:** ${rangeLinks}\n\n`);
     md.appendMarkdown(`**Your Usage (last ${snapshot.dayRange} days)**\n\n`);
 
-    // Shared-baseline stacked bars — colors from cursor.com/dashboard/usage legend.
-    const chart = renderBaselineChartHtml(snapshot.days);
+    // SVG data-URI chart (HTML tables are stripped in VS Code tooltips).
+    const chart = renderBaselineChartMarkdown(snapshot.days);
     if (chart) {
       md.appendMarkdown(`${chart}\n\n`);
+    }
+    // Always-visible text fallback (same baseline glyphs + model colors).
+    const fallback = renderFallbackSparklineHtml(snapshot.days);
+    if (fallback) {
+      md.appendMarkdown(`${fallback}\n\n`);
     }
     const legend = chartLegendHtml(snapshot.days);
     if (legend) {
