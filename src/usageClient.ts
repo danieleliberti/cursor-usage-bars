@@ -86,6 +86,52 @@ function httpsPostJson(
   });
 }
 
+function isRetryable(result: FetchResult): boolean {
+  if (result.ok) {
+    return false;
+  }
+  const status = result.status;
+  if (status === 429 || status === 502 || status === 503 || status === 504) {
+    return true;
+  }
+  return result.error === 'Request timed out.' || result.error === 'Network error.';
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((r) => setTimeout(r, ms));
+}
+
+/** Retry transient Cursor API failures (common 503 on per-day aggregates). */
+async function withRetries(
+  run: () => Promise<FetchResult>,
+  attempts = 3,
+  baseDelayMs = 450
+): Promise<FetchResult> {
+  let last: FetchResult = { ok: false, error: 'Unknown error.' };
+  for (let i = 0; i < attempts; i++) {
+    last = await run();
+    if (last.ok || !isRetryable(last) || i === attempts - 1) {
+      return last;
+    }
+    await sleep(baseDelayMs * (i + 1));
+  }
+  return last;
+}
+
+async function mapPool<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  async function worker(): Promise<void> {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]!);
+    }
+  }
+  const n = Math.max(1, Math.min(concurrency, items.length || 1));
+  await Promise.all(Array.from({ length: n }, () => worker()));
+  return out;
+}
+
 export type DayWindow = {
   /** Local calendar date YYYY-MM-DD */
   date: string;
@@ -156,24 +202,32 @@ export async function fetchUsageBundle(
 
   const windows = buildDayWindows(dayCount, now);
 
-  const [auth, hardLimit, summary, ...dayResults] = await Promise.all([
-    httpsGet(usageUrl(allowed.baseUrl, '/auth/usage'), token, allowed),
-    httpsPostJson(
-      usageUrl(allowed.baseUrl, DASHBOARD + '/GetHardLimit'),
-      token,
-      teamId === null ? {} : { teamId },
-      allowed
+  const [auth, hardLimit, summary] = await Promise.all([
+    withRetries(() => httpsGet(usageUrl(allowed.baseUrl, '/auth/usage'), token, allowed)),
+    withRetries(() =>
+      httpsPostJson(
+        usageUrl(allowed.baseUrl, DASHBOARD + '/GetHardLimit'),
+        token,
+        teamId === null ? {} : { teamId },
+        allowed
+      )
     ),
-    httpsGet(usageUrl(allowed.baseUrl, '/auth/usage-summary'), token, allowed),
-    ...windows.map((w) =>
+    withRetries(() =>
+      httpsGet(usageUrl(allowed.baseUrl, '/auth/usage-summary'), token, allowed)
+    ),
+  ]);
+
+  // Limit concurrency — blasting 15–30 day calls at once often triggers HTTP 503.
+  const dayResults = await mapPool(windows, 4, (w) =>
+    withRetries(() =>
       httpsPostJson(
         usageUrl(allowed.baseUrl, DASHBOARD + '/GetAggregatedUsageEvents'),
         token,
         { startDate: String(w.startMs), endDate: String(w.endMs) },
         allowed
       )
-    ),
-  ]);
+    )
+  );
 
   // Cycle-to-date spend for overage detection (period from /auth/usage when available).
   let cycleStartMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
@@ -187,11 +241,13 @@ export async function fetchUsageBundle(
     }
   }
 
-  const cycleSpend = await httpsPostJson(
-    usageUrl(allowed.baseUrl, DASHBOARD + '/GetAggregatedUsageEvents'),
-    token,
-    { startDate: String(cycleStartMs), endDate: String(now.getTime()) },
-    allowed
+  const cycleSpend = await withRetries(() =>
+    httpsPostJson(
+      usageUrl(allowed.baseUrl, DASHBOARD + '/GetAggregatedUsageEvents'),
+      token,
+      { startDate: String(cycleStartMs), endDate: String(now.getTime()) },
+      allowed
+    )
   );
 
   return {

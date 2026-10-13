@@ -24,14 +24,14 @@ const DAY_RANGE_STATE_KEY = 'cursorUsageBars.dayRange';
 const DEFAULT_DAY_RANGE: DayRange = 7;
 
 function refreshBudgetMs(dayRange: DayRange): number {
-  // Longer windows issue more parallel day requests.
+  // Day fetches are pooled + retried on 503; allow more wall time.
   if (dayRange >= 30) {
-    return 45_000;
+    return 60_000;
   }
   if (dayRange >= 15) {
-    return 35_000;
+    return 45_000;
   }
-  return 25_000;
+  return 35_000;
 }
 
 let pollTimer: NodeJS.Timeout | undefined;
@@ -196,23 +196,48 @@ async function refreshUsageInner(): Promise<void> {
     : undefined;
 
   const errParts: string[] = [];
+  const transientDayFails: string[] = [];
   const fmt = (r: { error: string; status?: number }) =>
     r.error + (r.status !== undefined ? ` (${r.status})` : '');
+  const isTransientStatus = (status?: number) =>
+    status === 429 || status === 502 || status === 503 || status === 504;
+
   if (!bundle.auth.ok) errParts.push(`auth: ${fmt(bundle.auth)}`);
   if (!bundle.summary.ok) errParts.push(`summary: ${fmt(bundle.summary)}`);
   if (!bundle.cycleSpend.ok) errParts.push(`cycle: ${fmt(bundle.cycleSpend)}`);
   for (const d of bundle.days) {
-    if (!d.result.ok) errParts.push(`${d.window.date}: ${fmt(d.result)}`);
+    if (!d.result.ok) {
+      const detail = `${d.window.date}: ${fmt(d.result)}`;
+      // Per-day 503/429 from Cursor is common under load — log it, don't scare in tooltip.
+      if (isTransientStatus(d.result.status)) {
+        transientDayFails.push(detail);
+      } else {
+        errParts.push(detail);
+      }
+    }
   }
-  if (errParts.length) {
-    log(`API partial errors: ${errParts.join('; ')}`);
+  if (errParts.length || transientDayFails.length) {
+    log(
+      `API partial errors: ${[...errParts, ...transientDayFails.map((e) => `[transient] ${e}`)].join('; ')}`
+    );
   }
 
   // If every usage call failed, surface an error instead of a fake $0 sparkline.
   const anyDayOk = days.some((d) => d.ok);
   if (!anyDayOk && !bundle.cycleSpend.ok) {
-    statusBar.setError(errParts.join('; ') || 'Usage API failed');
+    statusBar.setError(errParts.join('; ') || transientDayFails.join('; ') || 'Usage API failed');
     return;
+  }
+
+  let lastError: string | undefined;
+  if (errParts.length) {
+    lastError = errParts.join('; ');
+  } else if (transientDayFails.length) {
+    // Soft note only — retries already attempted in the client.
+    lastError = undefined;
+    log(
+      `${transientDayFails.length} day(s) still unavailable after retries (hidden from tooltip)`
+    );
   }
 
   const membershipType = summary?.membershipType;
@@ -240,7 +265,7 @@ async function refreshUsageInner(): Promise<void> {
     forecast,
     periodStart,
     periodEnd,
-    lastError: errParts.length ? errParts.join('; ') : undefined,
+    lastError,
     lastUpdated: now,
   };
 
