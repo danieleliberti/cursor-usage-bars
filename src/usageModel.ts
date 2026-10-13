@@ -325,71 +325,128 @@ export function dayBarValue(d: DaySpend): number {
   return d.tokens > 0 ? d.tokens : Math.max(0, d.cents);
 }
 
+/** Unicode block sparkline glyphs (shared typographic baseline). */
+const BARS = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'] as const;
+
 /**
- * HTML chart: every column shares the same baseline (valign=bottom),
- * stacked model colors like cursor.com/dashboard/usage.
+ * Build an SVG stacked bar chart (shared baseline + dashboard model colors).
+ * Returned as a markdown image — VS Code tooltips strip HTML tables/styles,
+ * but data-URI SVG images render reliably.
  */
-export function renderBaselineChartHtml(days: DaySpend[], chartHeight = 56): string {
+export function buildUsageChartSvg(days: DaySpend[], chartHeight = 72): string {
   if (days.length === 0) {
     return '';
   }
+
+  const padL = 4;
+  const padR = 4;
+  const padT = 6;
+  const padB = 10;
+  const gap = days.length > 20 ? 1 : days.length > 12 ? 2 : 3;
+  const barW = days.length > 20 ? 6 : days.length > 12 ? 8 : 10;
+  const plotH = chartHeight;
+  const width = padL + padR + days.length * barW + Math.max(0, days.length - 1) * gap;
+  const height = padT + plotH + padB;
+  const baselineY = padT + plotH;
   const max = Math.max(...days.map(dayBarValue), 1);
-  const colWidth = days.length > 20 ? 5 : days.length > 12 ? 7 : 9;
 
-  const cells = days
-    .map((d) => {
-      const value = dayBarValue(d);
-      const barH = value <= 0 ? 0 : Math.max(3, Math.round((value / max) * chartHeight));
-      const spacerH = chartHeight - barH;
+  const rects: string[] = [];
+  rects.push(
+    `<rect x="0" y="0" width="${width}" height="${height}" fill="#FCFCFC" rx="6"/>`
+  );
+  for (const t of [0.25, 0.5, 0.75]) {
+    const y = padT + plotH * (1 - t);
+    rects.push(
+      `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${width - padR}" y2="${y.toFixed(1)}" stroke="#E8E8E8" stroke-width="1"/>`
+    );
+  }
+  rects.push(
+    `<line x1="${padL}" y1="${baselineY}" x2="${width - padR}" y2="${baselineY}" stroke="#D0D0D0" stroke-width="1.5"/>`
+  );
 
-      const slices =
-        d.slices.length > 0
-          ? d.slices
-          : [
+  days.forEach((d, i) => {
+    const x = padL + i * (barW + gap);
+    const value = dayBarValue(d);
+    const barH = value <= 0 ? 0 : Math.max(3, (value / max) * plotH);
+    const slices =
+      d.slices.length > 0
+        ? d.slices
+        : value > 0
+          ? [
               {
                 model: 'default',
                 tokens: value,
                 cents: d.cents,
                 color: colorForModel('default'),
               },
-            ];
-      const sliceTotal =
-        slices.reduce((s, x) => s + (d.tokens > 0 ? x.tokens : x.cents || x.tokens), 0) || 1;
+            ]
+          : [];
+    if (!slices.length || barH <= 0) {
+      return;
+    }
+    const sliceTotal =
+      slices.reduce((s, sl) => s + (d.tokens > 0 ? sl.tokens : sl.cents || sl.tokens), 0) || 1;
 
-      // Stack bottom → top (first aggregation at the baseline).
-      let used = 0;
-      const segRows = slices
-        .map((sl, i) => {
-          const portion = (d.tokens > 0 ? sl.tokens : sl.cents || sl.tokens) / sliceTotal;
-          let segH =
-            i === slices.length - 1
-              ? Math.max(0, barH - used)
-              : Math.max(portion > 0 ? 1 : 0, Math.round(portion * barH));
-          used += segH;
-          if (segH <= 0) {
-            return '';
-          }
-          return `<tr><td style="height:${segH}px;width:${colWidth}px;background-color:${sl.color};font-size:0;line-height:0;padding:0;margin:0;">&nbsp;</td></tr>`;
-        })
-        .join('');
-
-      const spacer =
-        spacerH > 0
-          ? `<tr><td style="height:${spacerH}px;width:${colWidth}px;font-size:0;line-height:0;padding:0;">&nbsp;</td></tr>`
-          : '';
-
-      return `<td style="vertical-align:bottom;padding:0 1px;height:${chartHeight}px;">` +
-        `<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;height:${chartHeight}px;">` +
-        spacer +
-        segRows +
-        `</table></td>`;
-    })
-    .join('');
+    let yBottom = baselineY;
+    let remaining = barH;
+    slices.forEach((sl, si) => {
+      const portion = (d.tokens > 0 ? sl.tokens : sl.cents || sl.tokens) / sliceTotal;
+      const raw = portion * barH;
+      const segH =
+        si === slices.length - 1
+          ? Math.max(0, remaining)
+          : Math.min(remaining, Math.max(portion > 0 ? 1 : 0, raw));
+      remaining -= segH;
+      const y = yBottom - segH;
+      yBottom = y;
+      if (segH <= 0) {
+        return;
+      }
+      const rx = si === slices.length - 1 ? 2 : 0;
+      rects.push(
+        `<rect x="${x}" y="${y.toFixed(2)}" width="${barW}" height="${segH.toFixed(2)}" fill="${sl.color}" rx="${rx}"/>`
+      );
+    });
+  });
 
   return (
-    `<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;border-bottom:1px solid ${DashboardColors.track};">` +
-    `<tr style="vertical-align:bottom;">${cells}</tr></table>`
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
+    rects.join('') +
+    `</svg>`
   );
+}
+
+/** Markdown image embedding the SVG chart (works in VS Code / Cursor tooltips). */
+export function renderBaselineChartMarkdown(days: DaySpend[], chartHeight = 72): string {
+  const svg = buildUsageChartSvg(days, chartHeight);
+  if (!svg) {
+    return '';
+  }
+  return `![usage](data:image/svg+xml,${encodeURIComponent(svg)})`;
+}
+
+/** Text fallback when images are blocked: one glyph per day, dominant model color. */
+export function renderFallbackSparklineHtml(days: DaySpend[]): string {
+  if (days.length === 0) {
+    return '';
+  }
+  const values = days.map(dayBarValue);
+  const max = Math.max(...values, 0);
+  const glyphs = days.map((d, i) => {
+    const v = values[i] ?? 0;
+    let bar: string = BARS[0];
+    if (max > 0 && v > 0) {
+      const idx = Math.max(1, Math.min(BARS.length - 1, Math.round((v / max) * (BARS.length - 1))));
+      bar = BARS[idx]!;
+    }
+    const top = d.slices.reduce<ModelSlice | undefined>(
+      (best, s) => (!best || s.tokens + s.cents > best.tokens + best.cents ? s : best),
+      undefined
+    );
+    const color = top?.color ?? colorForModel('default');
+    return `<span style="color:${color};font-family:monospace;font-size:14px;line-height:1;vertical-align:bottom;">${bar}</span>`;
+  });
+  return `<span style="font-family:monospace;line-height:1;white-space:pre;">${glyphs.join('')}</span>`;
 }
 
 export function chartLegendHtml(days: DaySpend[]): string {
@@ -420,9 +477,6 @@ function escapeHtmlLite(s: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
-
-/** Unicode block sparkline for the status bar (single color; shared glyph baseline). */
-const BARS = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'] as const;
 
 export function sparkline(values: number[]): string {
   if (values.length === 0) {
