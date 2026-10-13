@@ -1,13 +1,16 @@
 import * as vscode from 'vscode';
 import {
+  CYCLE_START_MARKER,
   DAY_RANGES,
   DashboardColors,
   chartLegendHtml,
   dayBarValue,
   dayColumnHtml,
+  findCycleStartIndex,
   formatCentsUsd,
   renderColoredColumnsHtml,
-  sparkline,
+  sparklineWithCycleMarker,
+  toLocalDateKey,
   type DayRange,
   type UsageSnapshot,
 } from './usageModel';
@@ -59,9 +62,8 @@ export class UsageBarsStatusBar {
   }
 
   update(snapshot: UsageSnapshot): void {
-    const values = snapshot.days.map(dayBarValue);
-    const statusValues = values.slice(-Math.min(7, values.length));
-    const bars = sparkline(statusValues);
+    const statusDays = snapshot.days.slice(-Math.min(7, snapshot.days.length));
+    const bars = sparklineWithCycleMarker(statusDays, snapshot.periodStart);
     const plan = snapshot.planLabel ? `${snapshot.planLabel} ` : '';
     const range = `${snapshot.dayRange}D `;
 
@@ -119,23 +121,34 @@ export class UsageBarsStatusBar {
     md.appendMarkdown(`**Range:** ${rangeLinks}\n\n`);
     md.appendMarkdown(`**Your Usage (last ${snapshot.dayRange} days)**\n\n`);
 
-    // Colored columns only (no images) — dashboard model palette.
-    const columns = renderColoredColumnsHtml(snapshot.days);
+    // Colored columns — gray │ marks where the current plan cycle started.
+    const columns = renderColoredColumnsHtml(snapshot.days, snapshot.periodStart);
     if (columns) {
       md.appendMarkdown(`${columns}\n\n`);
     }
-    const legend = chartLegendHtml(snapshot.days);
+    const cycleIdx = findCycleStartIndex(snapshot.days, snapshot.periodStart);
+    const legend = chartLegendHtml(snapshot.days, cycleIdx >= 0);
     if (legend) {
       md.appendMarkdown(`${legend}\n\n`);
     }
+    if (cycleIdx >= 0) {
+      const startKey = toLocalDateKey(snapshot.periodStart);
+      md.appendMarkdown(
+        `_Gray ${CYCLE_START_MARKER} = plan cycle start${startKey ? ` (${escapeHtml(startKey)})` : ''}_\n\n`
+      );
+    }
 
     const maxValue = Math.max(...snapshot.days.map(dayBarValue), 0);
-    snapshot.days.forEach((d) => {
+    snapshot.days.forEach((d, i) => {
       const mark = d.ok ? '' : ' <i>(error)</i>';
       const costLabel = snapshot.payingOutsidePlan
         ? escapeHtml(formatCentsUsd(d.cents))
         : '<span style="color:#009957;"><b>Included</b></span>';
       const col = dayColumnHtml(d, maxValue);
+      const cycleMark =
+        i === cycleIdx
+          ? ` <span style="color:${DashboardColors.cycleStart};">${CYCLE_START_MARKER} plan start</span>`
+          : '';
       const models =
         d.slices.length > 0
           ? d.slices
@@ -146,7 +159,7 @@ export class UsageBarsStatusBar {
               .join(' · ')
           : '';
       md.appendMarkdown(
-        `- ${col} <code>${escapeHtml(d.date)}</code>: ${costLabel}${mark}${models ? `<br/>&nbsp;&nbsp;&nbsp;&nbsp;${models}` : ''}\n`
+        `- ${col} <code>${escapeHtml(d.date)}</code>: ${costLabel}${cycleMark}${mark}${models ? `<br/>&nbsp;&nbsp;&nbsp;&nbsp;${models}` : ''}\n`
       );
     });
 

@@ -102,6 +102,8 @@ export type ParsedUsageSummary = {
   onDemandUsedCents: number;
   /** Dashboard headline % for included usage, when present. */
   planPercentUsed?: number;
+  /** ISO billing cycle start from usage-summary. */
+  billingCycleStart?: string;
 };
 
 /**
@@ -114,6 +116,8 @@ export function parseUsageSummary(json: unknown): ParsedUsageSummary {
   }
   const membershipType = str(json.membershipType);
   const isUnlimited = json.isUnlimited === true;
+  const billingCycleStart =
+    str(json.billingCycleStart) ?? str(json.startOfMonth) ?? str(json.periodStart);
   const individual = isRecord(json.individualUsage) ? json.individualUsage : undefined;
   const team = isRecord(json.teamUsage) ? json.teamUsage : undefined;
   const plan = individual && isRecord(individual.plan) ? individual.plan : undefined;
@@ -141,7 +145,37 @@ export function parseUsageSummary(json: unknown): ParsedUsageSummary {
     onDemandEnabled,
     onDemandUsedCents,
     planPercentUsed,
+    billingCycleStart,
   };
+}
+
+/** Convert an API date/ISO string to local YYYY-MM-DD (same key as DaySpend.date). */
+export function toLocalDateKey(value: string | undefined): string | undefined {
+  if (!value?.trim()) {
+    return undefined;
+  }
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    // Already YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}/.test(value)) {
+      return value.slice(0, 10);
+    }
+    return undefined;
+  }
+  const d = new Date(parsed);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/** Index of the day where the current plan / billing cycle starts, or -1. */
+export function findCycleStartIndex(days: DaySpend[], periodStart?: string): number {
+  const key = toLocalDateKey(periodStart);
+  if (!key) {
+    return -1;
+  }
+  return days.findIndex((d) => d.date === key);
 }
 
 /** True only when the account has actual on-demand charges this cycle. */
@@ -318,7 +352,12 @@ export const DashboardColors = {
   usageAccent: '#81A1C1',
   cursorModel: '#1084FE',
   track: '#E8E8E8',
+  /** Vertical marker for plan / billing-cycle start */
+  cycleStart: '#9CA3AF',
 } as const;
+
+/** Gray vertical marker shown at plan cycle start. */
+export const CYCLE_START_MARKER = '│';
 
 /** Metric used for bar height — tokens when present (dashboard), else cents. */
 export function dayBarValue(d: DaySpend): number {
@@ -346,21 +385,48 @@ function barGlyphForValue(value: number, max: number): string {
 /**
  * Colored columns for the tooltip (no images).
  * One glyph per day, shared baseline, color = dominant model (dashboard palette).
+ * Inserts a gray vertical line before the day the current plan cycle started.
  */
-export function renderColoredColumnsHtml(days: DaySpend[]): string {
+export function renderColoredColumnsHtml(
+  days: DaySpend[],
+  periodStart?: string
+): string {
   if (days.length === 0) {
     return '';
   }
   const values = days.map(dayBarValue);
   const max = Math.max(...values, 0);
+  const cycleIdx = findCycleStartIndex(days, periodStart);
 
   const cols = days.map((d, i) => {
     const glyph = barGlyphForValue(values[i] ?? 0, max);
     const color = dominantSlice(d)?.color ?? colorForModel('default');
-    return `<span style="color:${color};">${glyph}</span>`;
+    const bar = `<span style="color:${color};">${glyph}</span>`;
+    if (i === cycleIdx) {
+      return (
+        `<span style="color:${DashboardColors.cycleStart};" title="Plan cycle start">${CYCLE_START_MARKER}</span>` +
+        bar
+      );
+    }
+    return bar;
   });
 
   return `<span style="font-family:monospace;font-size:18px;line-height:1;letter-spacing:1px;">${cols.join('')}</span>`;
+}
+
+/** Status-bar sparkline with optional gray │ at plan cycle start. */
+export function sparklineWithCycleMarker(
+  days: DaySpend[],
+  periodStart?: string
+): string {
+  const values = days.map(dayBarValue);
+  const bars = sparkline(values);
+  const cycleIdx = findCycleStartIndex(days, periodStart);
+  if (cycleIdx < 0 || bars.length === 0) {
+    return bars;
+  }
+  // sparkline returns one unicode char per day (no separators).
+  return bars.slice(0, cycleIdx) + CYCLE_START_MARKER + bars.slice(cycleIdx);
 }
 
 /** Single-day column glyph + color (for the daily list). */
@@ -370,7 +436,7 @@ export function dayColumnHtml(d: DaySpend, maxValue: number): string {
   return `<span style="color:${color};font-family:monospace;font-size:14px;">${glyph}</span>`;
 }
 
-export function chartLegendHtml(days: DaySpend[]): string {
+export function chartLegendHtml(days: DaySpend[], showCycleMarker = false): string {
   const seen = new Map<string, string>();
   for (const d of days) {
     for (const s of d.slices) {
@@ -379,16 +445,19 @@ export function chartLegendHtml(days: DaySpend[]): string {
       }
     }
   }
-  if (seen.size === 0) {
+  const parts = [...seen.entries()].slice(0, 8).map(
+    ([model, color]) =>
+      `<span style="color:${color};">■</span>&nbsp;${escapeHtmlLite(model)}`
+  );
+  if (showCycleMarker) {
+    parts.push(
+      `<span style="color:${DashboardColors.cycleStart};">${CYCLE_START_MARKER}</span>&nbsp;plan start`
+    );
+  }
+  if (parts.length === 0) {
     return '';
   }
-  return [...seen.entries()]
-    .slice(0, 8)
-    .map(
-      ([model, color]) =>
-        `<span style="color:${color};">■</span>&nbsp;${escapeHtmlLite(model)}`
-    )
-    .join('&nbsp;&nbsp;');
+  return parts.join('&nbsp;&nbsp;');
 }
 
 function escapeHtmlLite(s: string): string {

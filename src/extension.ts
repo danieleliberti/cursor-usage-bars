@@ -216,6 +216,8 @@ async function refreshUsageInner(): Promise<void> {
 
   const membershipType = summary?.membershipType;
   const planLabel = formatMembershipLabel(membershipType);
+  // Prefer usage-summary billing cycle; fall back to /auth/usage.
+  const periodStart = summary?.billingCycleStart ?? auth.periodStart;
 
   const snapshot: UsageSnapshot = {
     days,
@@ -227,7 +229,7 @@ async function refreshUsageInner(): Promise<void> {
     overageCents,
     onDemandEnabled: summary?.onDemandEnabled,
     planPercentUsed: summary?.planPercentUsed,
-    periodStart: auth.periodStart,
+    periodStart,
     lastError: errParts.length ? errParts.join('; ') : undefined,
     lastUpdated: now,
   };
