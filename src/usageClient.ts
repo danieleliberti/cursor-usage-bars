@@ -93,14 +93,15 @@ export type DayWindow = {
   endMs: number;
 };
 
-/** Last 2 full local days + today so far. */
-export function buildLastThreeDayWindows(now: Date = new Date()): DayWindow[] {
+/** Last `dayCount` local calendar days ending today (today is partial). */
+export function buildDayWindows(dayCount: number, now: Date = new Date()): DayWindow[] {
+  const count = Math.max(1, Math.min(31, Math.floor(dayCount)));
   const localMidnight = (d: Date): Date =>
     new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
 
   const todayStart = localMidnight(now);
   const windows: DayWindow[] = [];
-  for (let offset = 2; offset >= 0; offset--) {
+  for (let offset = count - 1; offset >= 0; offset--) {
     const start = new Date(todayStart);
     start.setDate(start.getDate() - offset);
     const end =
@@ -123,6 +124,11 @@ export function buildLastThreeDayWindows(now: Date = new Date()): DayWindow[] {
   return windows;
 }
 
+/** @deprecated Use buildDayWindows(3). */
+export function buildLastThreeDayWindows(now: Date = new Date()): DayWindow[] {
+  return buildDayWindows(3, now);
+}
+
 export type UsageBundle = {
   auth: FetchResult;
   hardLimit: FetchResult;
@@ -133,21 +139,22 @@ export type UsageBundle = {
 };
 
 /**
- * Fetches cycle metadata + spend for each of the last 3 local days.
+ * Fetches cycle metadata + spend for each day in the lookback window.
  * Uses undocumented Cursor dashboard endpoints (same pattern as community status-bar extensions).
  */
 export async function fetchUsageBundle(
   apiBaseUrl: string,
   token: string,
   teamId: number | null,
-  now: Date = new Date()
+  now: Date = new Date(),
+  dayCount = 7
 ): Promise<UsageBundle> {
   const allowed = parseAllowedApiBase(apiBaseUrl);
   if (!allowed.ok) {
     throw new Error(allowed.reason);
   }
 
-  const windows = buildLastThreeDayWindows(now);
+  const windows = buildDayWindows(dayCount, now);
 
   const [auth, hardLimit, summary, ...dayResults] = await Promise.all([
     httpsGet(usageUrl(allowed.baseUrl, '/auth/usage'), token, allowed),

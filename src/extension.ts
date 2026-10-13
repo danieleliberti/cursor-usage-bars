@@ -2,11 +2,14 @@ import * as vscode from 'vscode';
 import { probeCursorAuth, readCursorAccessToken, readCursorTeamId } from './cursorAuth';
 import { fetchUsageBundle } from './usageClient';
 import {
+  DAY_RANGES,
   formatMembershipLabel,
   parseAggregatedSpendCents,
   parseAuthUsage,
+  parseDayRange,
   parseUsageSummary,
   resolvePayingOutsidePlan,
+  type DayRange,
   type DaySpend,
   type UsageSnapshot,
 } from './usageModel';
@@ -15,7 +18,19 @@ import { UsageBarsStatusBar } from './statusBar';
 import { clearStoredToken, resolveToken, writeStoredToken } from './tokenStore';
 
 const DASHBOARD_DEFAULT = 'https://cursor.com/dashboard/usage';
-const REFRESH_BUDGET_MS = 25_000;
+const DAY_RANGE_STATE_KEY = 'cursorUsageBars.dayRange';
+const DEFAULT_DAY_RANGE: DayRange = 7;
+
+function refreshBudgetMs(dayRange: DayRange): number {
+  // Longer windows issue more parallel day requests.
+  if (dayRange >= 30) {
+    return 45_000;
+  }
+  if (dayRange >= 15) {
+    return 35_000;
+  }
+  return 25_000;
+}
 
 let pollTimer: NodeJS.Timeout | undefined;
 let statusBar: UsageBarsStatusBar | undefined;
@@ -58,7 +73,23 @@ function readConfig() {
     pollIntervalSeconds: clampPollSeconds(Number(cfg.get<number>('pollIntervalSeconds') ?? 300)),
     manualMonthlyLimitDollars: Number.isFinite(manual) && manual > 0 ? manual : undefined,
     dashboardUrl: String(cfg.get<string>('dashboardUrl') ?? DASHBOARD_DEFAULT),
+    dayRangeDefault: parseDayRange(cfg.get<number>('dayRange'), DEFAULT_DAY_RANGE),
   };
+}
+
+function getDayRange(context: vscode.ExtensionContext): DayRange {
+  const stored = context.globalState.get<unknown>(DAY_RANGE_STATE_KEY);
+  if (stored !== undefined && stored !== null) {
+    return parseDayRange(stored, DEFAULT_DAY_RANGE);
+  }
+  return readConfig().dayRangeDefault;
+}
+
+async function setDayRange(context: vscode.ExtensionContext, days: unknown): Promise<void> {
+  const next = parseDayRange(days, getDayRange(context));
+  await context.globalState.update(DAY_RANGE_STATE_KEY, next);
+  log(`dayRange set to ${next}D`);
+  await refreshUsage();
 }
 
 function hostLabel(context: vscode.ExtensionContext): string {
@@ -147,7 +178,8 @@ async function refreshUsageInner(): Promise<void> {
   ]);
 
   const now = new Date();
-  const bundle = await fetchUsageBundle(c.apiBaseUrl, resolved.token, teamId, now);
+  const dayRange = getDayRange(extensionContext);
+  const bundle = await fetchUsageBundle(c.apiBaseUrl, resolved.token, teamId, now, dayRange);
 
   const days: DaySpend[] = bundle.days.map(({ window, result }) => {
     if (!result.ok) {
@@ -193,6 +225,7 @@ async function refreshUsageInner(): Promise<void> {
 
   const snapshot: UsageSnapshot = {
     days,
+    dayRange,
     planLabel,
     membershipType,
     cycleSpentCents,
@@ -207,7 +240,7 @@ async function refreshUsageInner(): Promise<void> {
 
   statusBar.update(snapshot);
   log(
-    `OK plan=${planLabel ?? membershipType ?? '?'} onDemand=${summary?.onDemandEnabled ? overageCents : 'off'} days=${days.map((d) => `${d.date}:${d.cents}`).join(',')}`
+    `OK plan=${planLabel ?? membershipType ?? '?'} range=${dayRange}D onDemand=${summary?.onDemandEnabled ? overageCents : 'off'} days=${days.length}`
   );
   void statusBar.maybeAlertOverage(snapshot);
 }
@@ -221,8 +254,9 @@ async function refreshUsage(): Promise<void> {
   }
   refreshInFlight = true;
   statusBar.setLoading();
+  const dayRange = getDayRange(extensionContext);
   try {
-    await withTimeout(refreshUsageInner(), REFRESH_BUDGET_MS, 'refresh');
+    await withTimeout(refreshUsageInner(), refreshBudgetMs(dayRange), 'refresh');
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Unknown error';
     log(`refresh error: ${msg}`);
@@ -230,6 +264,25 @@ async function refreshUsage(): Promise<void> {
   } finally {
     refreshInFlight = false;
   }
+}
+
+async function promptDayRange(): Promise<void> {
+  if (!extensionContext) {
+    return;
+  }
+  const current = getDayRange(extensionContext);
+  const picked = await vscode.window.showQuickPick(
+    DAY_RANGES.map((d) => ({
+      label: `${d}D`,
+      description: d === current ? 'current' : undefined,
+      days: d,
+    })),
+    { title: 'Cursor Usage Bars — Day range', placeHolder: 'Show last N days in the popup' }
+  );
+  if (!picked) {
+    return;
+  }
+  await setDayRange(extensionContext, picked.days);
 }
 
 function schedulePolling(): void {
@@ -271,6 +324,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await clearStoredToken(context);
       await refreshUsage();
     }),
+    vscode.commands.registerCommand('cursorUsageBars.setDayRange', (days?: unknown) => {
+      if (days === undefined || days === null) {
+        return promptDayRange();
+      }
+      return setDayRange(context, days);
+    }),
+    vscode.commands.registerCommand('cursorUsageBars.chooseDayRange', () => promptDayRange()),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('cursorUsageBars')) {
         schedulePolling();

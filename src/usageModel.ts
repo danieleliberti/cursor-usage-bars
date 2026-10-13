@@ -5,8 +5,20 @@ export type DaySpend = {
   ok: boolean;
 };
 
+/** Supported hover-popup day ranges. */
+export type DayRange = 7 | 15 | 30;
+
+export const DAY_RANGES: readonly DayRange[] = [7, 15, 30] as const;
+
+export function parseDayRange(value: unknown, fallback: DayRange = 7): DayRange {
+  const n = typeof value === 'number' ? value : Number(value);
+  return DAY_RANGES.includes(n as DayRange) ? (n as DayRange) : fallback;
+}
+
 export type UsageSnapshot = {
   days: DaySpend[];
+  /** Selected lookback window shown in the tooltip (7 / 15 / 30). */
+  dayRange: DayRange;
   /** Display label for the subscribed plan (e.g. "Pro+", "Ultra"). */
   planLabel?: string;
   /** Raw membershipType from Cursor (e.g. "pro_plus"). */
