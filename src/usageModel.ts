@@ -7,6 +7,10 @@ export type DaySpend = {
 
 export type UsageSnapshot = {
   days: DaySpend[];
+  /** Display label for the subscribed plan (e.g. "Pro+", "Ultra"). */
+  planLabel?: string;
+  /** Raw membershipType from Cursor (e.g. "pro_plus"). */
+  membershipType?: string;
   /** Cycle-to-date chargeable spend in cents. */
   cycleSpentCents?: number;
   /** Per-user monthly cap in cents, when known. */
@@ -59,17 +63,66 @@ export function parseHardLimit(json: unknown): { limitCents?: number } {
   return { limitCents: dollars * 100 };
 }
 
-export function parseUsageSummary(json: unknown): { isUnlimited: boolean; limitCents?: number } {
+export function parseUsageSummary(json: unknown): {
+  isUnlimited: boolean;
+  limitCents?: number;
+  membershipType?: string;
+} {
   if (!isRecord(json)) {
     return { isUnlimited: false };
   }
+  const membershipType = str(json.membershipType);
   const isUnlimited = json.isUnlimited === true;
-  const overall = isRecord(json.individualUsage) ? json.individualUsage.overall : undefined;
-  if (!isRecord(overall) || overall.enabled === false) {
-    return { isUnlimited };
+  const individual = isRecord(json.individualUsage) ? json.individualUsage : undefined;
+  const overall = individual && isRecord(individual.overall) ? individual.overall : undefined;
+  const plan = individual && isRecord(individual.plan) ? individual.plan : undefined;
+
+  let limitCents: number | undefined;
+  if (isRecord(overall) && overall.enabled !== false) {
+    const limit = num(overall.limit);
+    if (limit !== undefined && limit > 0) {
+      limitCents = limit;
+    }
   }
-  const limit = num(overall.limit);
-  return limit !== undefined && limit > 0 ? { isUnlimited, limitCents: limit } : { isUnlimited };
+  if (limitCents === undefined && isRecord(plan) && plan.enabled !== false) {
+    const limit = num(plan.limit);
+    if (limit !== undefined && limit > 0) {
+      limitCents = limit;
+    }
+  }
+
+  return limitCents !== undefined
+    ? { isUnlimited, limitCents, membershipType }
+    : { isUnlimited, membershipType };
+}
+
+/** Map Cursor membershipType → dashboard-style label ("Pro+", "Ultra", …). */
+export function formatMembershipLabel(membershipType: string | undefined): string | undefined {
+  if (!membershipType) {
+    return undefined;
+  }
+  const key = membershipType.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  const known: Record<string, string> = {
+    free: 'Free',
+    free_trial: 'Free Trial',
+    hobby: 'Hobby',
+    pro: 'Pro',
+    pro_plus: 'Pro+',
+    proplus: 'Pro+',
+    ultra: 'Ultra',
+    business: 'Business',
+    team: 'Team',
+    enterprise: 'Enterprise',
+  };
+  if (known[key]) {
+    return known[key];
+  }
+  // Fallback: title-case tokens (foo_bar → Foo Bar).
+  return key
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 }
 
 /** Missing totalCostCents on a successful response means zero spend. */
@@ -107,6 +160,68 @@ export function formatCentsUsd(cents: number): string {
   }).format(cents / 100);
 }
 
+/**
+ * Colors sampled from https://cursor.com/dashboard/usage (chart legend)
+ * and Spending progress fill `--color-dashboard-usage-accent`.
+ */
+export const DashboardColors = {
+  /** Usage chart "default" / included-leaning green */
+  included: '#009957',
+  /** Usage chart warm accent (grok-4.7-high) — used for on-demand / overage */
+  onDemand: '#FFCB78',
+  /** Spending progress fill: rgb(129, 161, 193) */
+  usageAccent: '#81A1C1',
+  /** Usage chart cursor-grok blue */
+  cursorModel: '#1084FE',
+} as const;
+
+export type DayBillingKind = 'included' | 'mixed' | 'onDemand';
+
+/**
+ * Classify each day in the 3-day window relative to the included plan limit,
+ * approximating cycle spend before the window as cycleSpent − sum(days).
+ */
+export function classifyDayBilling(
+  days: DaySpend[],
+  cycleSpentCents: number | undefined,
+  limitCents: number | undefined
+): DayBillingKind[] {
+  if (
+    limitCents === undefined ||
+    cycleSpentCents === undefined ||
+    cycleSpentCents <= limitCents
+  ) {
+    return days.map(() => 'included');
+  }
+
+  const windowSpend = days.reduce((sum, d) => sum + Math.max(0, d.cents), 0);
+  let spentBefore = Math.max(0, cycleSpentCents - windowSpend);
+
+  return days.map((d) => {
+    const start = spentBefore;
+    const end = spentBefore + Math.max(0, d.cents);
+    spentBefore = end;
+    if (end <= limitCents) {
+      return 'included';
+    }
+    if (start >= limitCents) {
+      return 'onDemand';
+    }
+    return 'mixed';
+  });
+}
+
+export function colorForDayBilling(kind: DayBillingKind): string {
+  switch (kind) {
+    case 'included':
+      return DashboardColors.included;
+    case 'onDemand':
+      return DashboardColors.onDemand;
+    case 'mixed':
+      return DashboardColors.usageAccent;
+  }
+}
+
 /** Unicode block sparkline — 8 levels. */
 const BARS = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'] as const;
 
@@ -125,4 +240,26 @@ export function sparkline(values: number[]): string {
       return BARS[idx];
     })
     .join('');
+}
+
+/** Per-day colored sparkline segments (for HTML tooltips). */
+export function sparklineSegments(
+  values: number[],
+  kinds: DayBillingKind[]
+): Array<{ bar: string; color: string }> {
+  if (values.length === 0) {
+    return [];
+  }
+  const max = Math.max(...values, 0);
+  return values.map((v, i) => {
+    let bar: string;
+    if (max <= 0) {
+      bar = BARS[0];
+    } else {
+      const ratio = Math.max(0, v) / max;
+      const idx = Math.min(BARS.length - 1, Math.round(ratio * (BARS.length - 1)));
+      bar = BARS[idx];
+    }
+    return { bar, color: colorForDayBilling(kinds[i] ?? 'included') };
+  });
 }

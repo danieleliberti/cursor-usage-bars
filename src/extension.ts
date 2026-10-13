@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { probeCursorAuth, readCursorAccessToken, readCursorTeamId } from './cursorAuth';
 import { fetchUsageBundle } from './usageClient';
 import {
+  formatMembershipLabel,
   parseAggregatedSpendCents,
   parseAuthUsage,
   parseHardLimit,
@@ -198,8 +199,13 @@ async function refreshUsageInner(): Promise<void> {
     return;
   }
 
+  const membershipType = summary?.membershipType;
+  const planLabel = formatMembershipLabel(membershipType);
+
   const snapshot: UsageSnapshot = {
     days,
+    planLabel,
+    membershipType,
     cycleSpentCents,
     limitCents,
     payingOutsidePlan: overageCents > 0,
@@ -210,7 +216,9 @@ async function refreshUsageInner(): Promise<void> {
   };
 
   statusBar.update(snapshot);
-  log(`OK days=${days.map((d) => `${d.date}:${d.cents}`).join(',')}`);
+  log(
+    `OK plan=${planLabel ?? membershipType ?? '?'} days=${days.map((d) => `${d.date}:${d.cents}`).join(',')}`
+  );
   void statusBar.maybeAlertOverage(snapshot);
 }
 
