@@ -5,9 +5,8 @@ import {
   formatMembershipLabel,
   parseAggregatedSpendCents,
   parseAuthUsage,
-  parseHardLimit,
   parseUsageSummary,
-  resolveLimitCents,
+  resolvePayingOutsidePlan,
   type DaySpend,
   type UsageSnapshot,
 } from './usageModel';
@@ -163,21 +162,11 @@ async function refreshUsageInner(): Promise<void> {
 
   const auth = bundle.auth.ok ? parseAuthUsage(bundle.auth.json) : {};
   const summary = bundle.summary.ok ? parseUsageSummary(bundle.summary.json) : undefined;
-  const hardLimit = bundle.hardLimit.ok ? parseHardLimit(bundle.hardLimit.json) : {};
-  const limitCents = resolveLimitCents({
-    summary,
-    hardLimit,
-    manualLimitDollars: c.manualMonthlyLimitDollars,
-  });
+  const { payingOutsidePlan, overageCents } = resolvePayingOutsidePlan(summary);
 
   const cycleSpentCents = bundle.cycleSpend.ok
     ? parseAggregatedSpendCents(bundle.cycleSpend.json)
     : undefined;
-
-  const overageCents =
-    limitCents !== undefined && cycleSpentCents !== undefined
-      ? Math.max(0, cycleSpentCents - limitCents)
-      : 0;
 
   const errParts: string[] = [];
   const fmt = (r: { error: string; status?: number }) =>
@@ -207,9 +196,10 @@ async function refreshUsageInner(): Promise<void> {
     planLabel,
     membershipType,
     cycleSpentCents,
-    limitCents,
-    payingOutsidePlan: overageCents > 0,
+    payingOutsidePlan,
     overageCents,
+    onDemandEnabled: summary?.onDemandEnabled,
+    planPercentUsed: summary?.planPercentUsed,
     periodStart: auth.periodStart,
     lastError: errParts.length ? errParts.join('; ') : undefined,
     lastUpdated: now,
@@ -217,7 +207,7 @@ async function refreshUsageInner(): Promise<void> {
 
   statusBar.update(snapshot);
   log(
-    `OK plan=${planLabel ?? membershipType ?? '?'} days=${days.map((d) => `${d.date}:${d.cents}`).join(',')}`
+    `OK plan=${planLabel ?? membershipType ?? '?'} onDemand=${summary?.onDemandEnabled ? overageCents : 'off'} days=${days.map((d) => `${d.date}:${d.cents}`).join(',')}`
   );
   void statusBar.maybeAlertOverage(snapshot);
 }
