@@ -49,9 +49,22 @@ export type UsageSnapshot = {
   onDemandEnabled?: boolean;
   /** Included-plan usage headline % from the dashboard (0–100+), when known. */
   planPercentUsed?: number;
+  /** Linear projection of included usage % at billing cycle end. */
+  forecast?: PlanUsageForecast;
   periodStart?: string;
+  periodEnd?: string;
   lastError?: string;
   lastUpdated: Date;
+};
+
+/** Pace forecast for included usage at plan / billing-cycle expiry. */
+export type PlanUsageForecast = {
+  /** Projected included usage % at cycle end (linear from current burn). */
+  projectedPercent: number;
+  /** under = below calendar pace, on = near pace, over = will exceed 100%. */
+  pace: 'under' | 'on' | 'over';
+  /** Codicon name without $(...), e.g. trending-down. */
+  icon: string;
 };
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -104,6 +117,8 @@ export type ParsedUsageSummary = {
   planPercentUsed?: number;
   /** ISO billing cycle start from usage-summary. */
   billingCycleStart?: string;
+  /** ISO billing cycle end from usage-summary. */
+  billingCycleEnd?: string;
 };
 
 /**
@@ -118,6 +133,7 @@ export function parseUsageSummary(json: unknown): ParsedUsageSummary {
   const isUnlimited = json.isUnlimited === true;
   const billingCycleStart =
     str(json.billingCycleStart) ?? str(json.startOfMonth) ?? str(json.periodStart);
+  const billingCycleEnd = str(json.billingCycleEnd) ?? str(json.endOfMonth) ?? str(json.periodEnd);
   const individual = isRecord(json.individualUsage) ? json.individualUsage : undefined;
   const team = isRecord(json.teamUsage) ? json.teamUsage : undefined;
   const plan = individual && isRecord(individual.plan) ? individual.plan : undefined;
@@ -155,7 +171,65 @@ export function parseUsageSummary(json: unknown): ParsedUsageSummary {
     onDemandUsedCents,
     planPercentUsed,
     billingCycleStart,
+    billingCycleEnd,
   };
+}
+
+/**
+ * Project included-plan usage % at cycle end from current burn rate.
+ * Icon: trending-down (under pace), timeline-view-icon (on pace), trending-up (over 100%).
+ */
+export function projectPlanUsageAtCycleEnd(args: {
+  planPercentUsed?: number;
+  periodStart?: string;
+  periodEnd?: string;
+  now?: Date;
+}): PlanUsageForecast | undefined {
+  const { planPercentUsed, periodStart } = args;
+  if (planPercentUsed === undefined || !Number.isFinite(planPercentUsed) || !periodStart) {
+    return undefined;
+  }
+  const startMs = Date.parse(periodStart);
+  if (!Number.isFinite(startMs)) {
+    return undefined;
+  }
+  let endMs = args.periodEnd ? Date.parse(args.periodEnd) : NaN;
+  // If API omits cycle end, assume one calendar month from start.
+  if (!Number.isFinite(endMs) || endMs <= startMs) {
+    const approx = new Date(startMs);
+    approx.setMonth(approx.getMonth() + 1);
+    endMs = approx.getTime();
+  }
+  const nowMs = (args.now ?? new Date()).getTime();
+  if (endMs <= startMs) {
+    return undefined;
+  }
+  const elapsed = Math.max(0, nowMs - startMs);
+  const total = endMs - startMs;
+  if (elapsed < 60_000) {
+    // Too early in the cycle for a meaningful projection.
+    return { projectedPercent: planPercentUsed, pace: 'on', icon: 'timeline-view-icon' };
+  }
+  const projectedPercent = planPercentUsed * (total / elapsed);
+  if (!Number.isFinite(projectedPercent)) {
+    return undefined;
+  }
+
+  // Calendar-expected % by now (linear allowance).
+  const expectedNow = (100 * elapsed) / total;
+  let pace: PlanUsageForecast['pace'];
+  let icon: string;
+  if (projectedPercent > 100 || planPercentUsed > expectedNow * 1.15) {
+    pace = 'over';
+    icon = 'trending-up';
+  } else if (planPercentUsed < expectedNow * 0.85) {
+    pace = 'under';
+    icon = 'trending-down';
+  } else {
+    pace = 'on';
+    icon = 'timeline-view-icon';
+  }
+  return { projectedPercent, pace, icon };
 }
 
 /** Convert an API date/ISO string to local YYYY-MM-DD (same key as DaySpend.date). */

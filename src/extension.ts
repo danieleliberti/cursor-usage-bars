@@ -9,6 +9,7 @@ import {
   parseAuthUsage,
   parseDayRange,
   parseUsageSummary,
+  projectPlanUsageAtCycleEnd,
   resolvePayingOutsidePlan,
   type DayRange,
   type DaySpend,
@@ -218,6 +219,13 @@ async function refreshUsageInner(): Promise<void> {
   const planLabel = formatMembershipLabel(membershipType);
   // Prefer usage-summary billing cycle; fall back to /auth/usage.
   const periodStart = summary?.billingCycleStart ?? auth.periodStart;
+  const periodEnd = summary?.billingCycleEnd;
+  const forecast = projectPlanUsageAtCycleEnd({
+    planPercentUsed: summary?.planPercentUsed,
+    periodStart,
+    periodEnd,
+    now,
+  });
 
   const snapshot: UsageSnapshot = {
     days,
@@ -229,7 +237,9 @@ async function refreshUsageInner(): Promise<void> {
     overageCents,
     onDemandEnabled: summary?.onDemandEnabled,
     planPercentUsed: summary?.planPercentUsed,
+    forecast,
     periodStart,
+    periodEnd,
     lastError: errParts.length ? errParts.join('; ') : undefined,
     lastUpdated: now,
   };
