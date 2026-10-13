@@ -39,7 +39,7 @@ function httpsGet(url: URL, token: string, allowed: AllowedOriginResult & { ok: 
           Accept: 'application/json',
           'User-Agent': 'cursor-usage-bars',
         },
-        timeout: 20_000,
+        timeout: 8_000,
       },
       (res) => readResponse(res, resolve)
     );
@@ -72,7 +72,7 @@ function httpsPostJson(
           'Connect-Protocol-Version': '1',
           'User-Agent': 'cursor-usage-bars',
         },
-        timeout: 20_000,
+        timeout: 8_000,
       },
       (res) => readResponse(res, resolve)
     );

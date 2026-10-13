@@ -4,7 +4,7 @@ This extension is both `ui` and `workspace`. Install it on **both** sides.
 
 ## 1) Local (required for automatic auth)
 
-1. Download `cursor-usage-bars-0.3.0.vsix` to your PC  
+1. Download `cursor-usage-bars-0.3.1.vsix` to your PC  
 2. `Ctrl+Shift+P` → **Extensions: Install from VSIX…** → select the file → **Local**  
 3. **Developer: Reload Window**
 
@@ -15,7 +15,7 @@ After you sign in to Cursor on that machine, the token is read automatically and
 On the remote host:
 
 ```bash
-cursor --install-extension /path/to/cursor-usage-bars-0.3.0.vsix --force
+cursor --install-extension /path/to/cursor-usage-bars-0.3.1.vsix --force
 ```
 
 Or use **Install from VSIX…** and choose **SSH**.

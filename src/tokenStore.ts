@@ -40,7 +40,7 @@ export async function readWorkspaceTokenFile(): Promise<string | null> {
     return null;
   }
   try {
-    const buf = await withTimeout(vscode.workspace.fs.readFile(uri), 3_000);
+    const buf = await withTimeout(vscode.workspace.fs.readFile(uri), 2_000);
     const v = Buffer.from(buf).toString('utf8').trim();
     return v || null;
   } catch {
@@ -48,7 +48,7 @@ export async function readWorkspaceTokenFile(): Promise<string | null> {
   }
 }
 
-/** Non-blocking best-effort sync into remote workspace (must never hang refresh). */
+/** Never await this from the refresh path — remote FS can hang. */
 export function syncTokenToWorkspaceFileFireAndForget(token: string): void {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder || !token.trim()) {
@@ -57,32 +57,23 @@ export function syncTokenToWorkspaceFileFireAndForget(token: string): void {
   void (async () => {
     try {
       const dir = vscode.Uri.joinPath(folder.uri, '.cursor');
-      await withTimeout(vscode.workspace.fs.createDirectory(dir), 3_000);
+      await withTimeout(vscode.workspace.fs.createDirectory(dir), 2_000);
       const uri = vscode.Uri.joinPath(dir, 'usage-bars.accessToken');
-      await withTimeout(
-        vscode.workspace.fs.writeFile(uri, Buffer.from(token.trim(), 'utf8')),
-        3_000
-      );
+      await withTimeout(vscode.workspace.fs.writeFile(uri, Buffer.from(token.trim(), 'utf8')), 2_000);
     } catch {
-      // ignore — status bar must not wait on remote FS
+      // ignore
     }
   })();
 }
 
 export async function readStoredToken(context: vscode.ExtensionContext): Promise<string | null> {
   try {
-    const fromSecret = await withTimeout(context.secrets.get(SECRET_KEY), 2_000);
+    const fromSecret = await withTimeout(context.secrets.get(SECRET_KEY), 1_500);
     if (fromSecret?.trim()) {
       return fromSecret.trim();
     }
   } catch {
     // ignore
-  }
-
-  const fromWs = await readWorkspaceTokenFile();
-  if (fromWs) {
-    void context.secrets.store(SECRET_KEY, fromWs);
-    return fromWs;
   }
 
   try {
@@ -97,6 +88,13 @@ export async function readStoredToken(context: vscode.ExtensionContext): Promise
   } catch {
     // ignore
   }
+
+  const fromWs = await readWorkspaceTokenFile();
+  if (fromWs) {
+    void context.secrets.store(SECRET_KEY, fromWs);
+    return fromWs;
+  }
+
   return null;
 }
 
@@ -106,7 +104,7 @@ export async function writeStoredToken(context: vscode.ExtensionContext, token: 
     return;
   }
   try {
-    await withTimeout(context.secrets.store(SECRET_KEY, t), 2_000);
+    await withTimeout(context.secrets.store(SECRET_KEY, t), 1_500);
   } catch {
     // ignore
   }
@@ -145,39 +143,30 @@ export async function clearStoredToken(context: vscode.ExtensionContext): Promis
 }
 
 /**
- * Prefer cached secret/file first (instant), then Cursor DB.
- * Never block the UI on remote workspace I/O.
+ * Prefer cached secret/file (instant). Only hit Cursor DB when nothing is cached.
+ * Background-refresh the DB so the status bar never waits on a huge state.vscdb.
  */
 export async function resolveToken(
   context: vscode.ExtensionContext,
   readFromCursorDb: () => Promise<string | null>
 ): Promise<{ token: string | null; source: 'cursor-db' | 'secret' | 'workspace-file' | 'file' | 'none' }> {
-  // Fast path first — avoids hanging on huge state.vscdb every poll
   const cached = await readStoredToken(context);
   if (cached) {
-    // Refresh from DB in background; update cache if changed
     void (async () => {
       try {
-        const fromDb = await readFromCursorDb();
-        if (fromDb && fromDb !== cached) {
+        const fromDb = await withTimeout(readFromCursorDb(), 8_000);
+        if (fromDb) {
           await writeStoredToken(context, fromDb);
-        } else if (fromDb) {
-          syncTokenToWorkspaceFileFireAndForget(fromDb);
         }
       } catch {
-        // ignore background refresh errors
+        // ignore background refresh
       }
     })();
-    // Distinguish workspace-file vs secret roughly
-    const ws = await readWorkspaceTokenFile();
-    if (ws && ws === cached) {
-      return { token: cached, source: 'workspace-file' };
-    }
     return { token: cached, source: 'secret' };
   }
 
   try {
-    const fromDb = await readFromCursorDb();
+    const fromDb = await withTimeout(readFromCursorDb(), 8_000);
     if (fromDb) {
       await writeStoredToken(context, fromDb);
       return { token: fromDb, source: 'cursor-db' };
