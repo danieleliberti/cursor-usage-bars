@@ -1,23 +1,33 @@
 # Cursor Usage Bars
 
-Status bar: 3 colonnine (D−2 · ieri · oggi) + alert overage + click → dashboard usage.
+Unofficial VS Code / Cursor extension. Shows a **3-day spend sparkline** (D−2 · yesterday · today) in the status bar, alerts on plan overage, and opens the [usage dashboard](https://cursor.com/dashboard/usage) on click.
 
 ## Local + Remote SSH
 
-| Lato | Ruolo |
+| Side | Role |
 |---|---|
-| **Local (UI)** | Legge il login Cursor → auth automatica; sync token nel workspace |
-| **SSH (workspace)** | Mostra l’estensione sul remote e usa il token syncato |
+| **Local (UI)** | Reads the Cursor login session and syncs the token into the workspace |
+| **SSH (workspace)** | Shows the extension on the remote host and uses the synced token |
 
-Vedi `INSTALL.md`.
+See `INSTALL.md` for setup.
 
 ## Auth
 
-1. Login Cursor sul PC  
-2. UI legge `state.vscdb`  
-3. Scrive `.cursor/usage-bars.accessToken` (gitignored)  
-4. Lato SSH lo legge → status bar anche in remote  
+1. Sign in to Cursor on your desktop  
+2. The UI host reads `state.vscdb`  
+3. It writes `.cursor/usage-bars.accessToken` (gitignored)  
+4. The SSH host reads that file and updates the status bar  
 
-## Licenza
+No cookie paste required for the normal path.
 
-MIT. Non affiliata a Cursor.
+## Build
+
+```bash
+npm install
+npm run compile
+npx vsce package --allow-missing-repository
+```
+
+## License
+
+MIT. Not affiliated with Cursor. Uses undocumented usage endpoints that may change.

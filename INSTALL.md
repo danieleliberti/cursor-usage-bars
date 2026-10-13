@@ -1,36 +1,36 @@
-# Installazione — Local + Remote SSH
+# Install — Local + Remote SSH
 
-L’estensione è `ui` + `workspace`: deve stare **su entrambi** i lati.
+This extension is both `ui` and `workspace`. Install it on **both** sides.
 
-## 1) Locale (obbligatorio per auth automatica)
+## 1) Local (required for automatic auth)
 
-1. Scarica `cursor-usage-bars-0.3.0.vsix` sul PC  
-2. `Ctrl+Shift+P` → **Extensions: Install from VSIX…** → file scaricato → **Local**  
-3. Reload Window  
+1. Download `cursor-usage-bars-0.3.0.vsix` to your PC  
+2. `Ctrl+Shift+P` → **Extensions: Install from VSIX…** → select the file → **Local**  
+3. **Developer: Reload Window**
 
-Dopo il login Cursor sul PC, il token si legge da solo e la status bar compare anche nelle finestre SSH.
+After you sign in to Cursor on that machine, the token is read automatically and the status bar also appears in SSH windows.
 
-## 2) Remote SSH (per vederla sotto “SSH: host”)
+## 2) Remote SSH (so it shows under “SSH: host”)
 
-Sul remote (ops-compute):
+On the remote host:
 
 ```bash
-cursor --install-extension /deploy/cursor-usage-bars-0.3.0.vsix --force
+cursor --install-extension /path/to/cursor-usage-bars-0.3.0.vsix --force
 ```
 
-Oppure Install from VSIX scegliendo **SSH**.
+Or use **Install from VSIX…** and choose **SSH**.
 
-## Come funziona l’auth in SSH
+## How auth works over SSH
 
-1. Lato **Local (UI)**: legge il login Cursor da `state.vscdb`  
-2. Scrive (auto) `.cursor/usage-bars.accessToken` nel workspace remoto  
-3. Lato **SSH (workspace)**: legge quel file e mostra le colonnine  
+1. **Local (UI)** reads the Cursor session from `state.vscdb`  
+2. It writes `.cursor/usage-bars.accessToken` into the remote workspace  
+3. **SSH (workspace)** reads that file and renders the sparkline  
 
-Niente cookie da incollare. Il file viene aggiunto a `.gitignore` se presente.
+No manual cookie paste. Prefer keeping the token file out of git (see `.gitignore`).
 
-## Verifica
+## Verify
 
-- Estensioni → **Local**: Cursor Usage Bars  
-- Estensioni → **SSH: …**: Cursor Usage Bars  
+- Extensions → **Local**: Cursor Usage Bars  
+- Extensions → **SSH: …**: Cursor Usage Bars  
 - Status bar: `▃▅█ $x.xx`  
-- Comando: **Cursor Usage Bars: Auth Status**
+- Command: **Cursor Usage Bars: Auth Status**
