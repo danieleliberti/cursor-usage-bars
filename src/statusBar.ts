@@ -1,15 +1,18 @@
 import * as vscode from 'vscode';
 import {
+  DAY_RANGES,
   DashboardColors,
   classifyDayBilling,
   formatCentsUsd,
   sparkline,
   sparklineSegments,
   type DayBillingKind,
+  type DayRange,
   type UsageSnapshot,
 } from './usageModel';
 
 const OPEN_CMD = 'cursorUsageBars.openDashboard';
+const SET_RANGE_CMD = 'cursorUsageBars.setDayRange';
 
 function escapeHtml(s: string): string {
   return s
@@ -17,6 +20,10 @@ function escapeHtml(s: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function rangeCommandUri(days: DayRange): string {
+  return `command:${SET_RANGE_CMD}?${encodeURIComponent(JSON.stringify([days]))}`;
 }
 
 export class UsageBarsStatusBar {
@@ -53,17 +60,18 @@ export class UsageBarsStatusBar {
   update(snapshot: UsageSnapshot): void {
     const cents = snapshot.days.map((d) => d.cents);
     const kinds = classifyDayBilling(snapshot.days, snapshot.payingOutsidePlan);
-    const bars = sparkline(cents);
+    // Keep the status bar compact: sparkline of the last up to 7 days.
+    const statusCents = cents.slice(-Math.min(7, cents.length));
+    const bars = sparkline(statusCents);
     const plan = snapshot.planLabel ? `${snapshot.planLabel} ` : '';
+    const range = `${snapshot.dayRange}D `;
 
     if (snapshot.payingOutsidePlan) {
-      // Real on-demand charges only (from usage-summary.onDemand).
-      this.item.text = `$(alert) ${plan}${bars} ${formatCentsUsd(snapshot.overageCents)} over`;
+      this.item.text = `$(alert) ${plan}${range}${bars} ${formatCentsUsd(snapshot.overageCents)} over`;
       this.item.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
       this.item.color = DashboardColors.onDemand;
     } else {
-      // Within subscription: green sparkline, plan name, no dollar amount.
-      this.item.text = `$(pulse) ${plan}${bars}`;
+      this.item.text = `$(pulse) ${plan}${range}${bars}`;
       this.item.backgroundColor = undefined;
       this.item.color = DashboardColors.included;
     }
@@ -71,10 +79,6 @@ export class UsageBarsStatusBar {
     this.item.tooltip = this.buildTooltip(snapshot, kinds);
   }
 
-  /**
-   * Fires a warning once per overage amount (until it changes) so the user notices
-   * on-demand / out-of-plan charges without spam.
-   */
   async maybeAlertOverage(snapshot: UsageSnapshot): Promise<void> {
     if (!snapshot.payingOutsidePlan) {
       this.lastAlertKey = undefined;
@@ -104,7 +108,16 @@ export class UsageBarsStatusBar {
         `**Plan:** <span style="color:${DashboardColors.included};">${escapeHtml(snapshot.planLabel)}</span>\n\n`
       );
     }
-    md.appendMarkdown('**Cursor usage (last 3 days)**\n\n');
+
+    const rangeLinks = DAY_RANGES.map((d) => {
+      const label = `${d}D`;
+      if (d === snapshot.dayRange) {
+        return `**${label}**`;
+      }
+      return `[${label}](${rangeCommandUri(d)})`;
+    }).join(' · ');
+    md.appendMarkdown(`**Range:** ${rangeLinks}\n\n`);
+    md.appendMarkdown(`**Cursor usage (last ${snapshot.dayRange} days)**\n\n`);
 
     const segments = sparklineSegments(
       snapshot.days.map((d) => d.cents),
@@ -122,7 +135,6 @@ export class UsageBarsStatusBar {
       const color = kind === 'included' ? DashboardColors.included : DashboardColors.usageAccent;
       const mark = d.ok ? '' : ' <i>(error)</i>';
       const price = escapeHtml(formatCentsUsd(d.cents));
-      // Included-plan days: green (usage value, not an extra charge).
       md.appendMarkdown(
         `- <code>${escapeHtml(d.date)}</code>: <span style="color:${color};"><b>${price}</b></span>${mark}\n`
       );

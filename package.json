@@ -1,8 +1,8 @@
 {
   "name": "cursor-usage-bars",
   "displayName": "Cursor Usage Bars",
-  "description": "Status bar sparkline of Cursor spend (D-2, D-1, today). Auto auth from Cursor login. Works in Local and Remote SSH.",
-  "version": "0.4.1",
+  "description": "Status bar sparkline of Cursor spend with 7D / 15D / 30D popup range. Auto auth from Cursor login. Works in Local and Remote SSH.",
+  "version": "0.4.2",
   "publisher": "danieleliberti",
   "author": {
     "name": "Daniele Liberti"
@@ -53,6 +53,14 @@
       {
         "command": "cursorUsageBars.clearToken",
         "title": "Cursor Usage Bars: Clear Access Token"
+      },
+      {
+        "command": "cursorUsageBars.chooseDayRange",
+        "title": "Cursor Usage Bars: Choose Day Range (7D / 15D / 30D)"
+      },
+      {
+        "command": "cursorUsageBars.setDayRange",
+        "title": "Cursor Usage Bars: Set Day Range"
       }
     ],
     "configuration": {
@@ -68,6 +76,12 @@
           "default": 300,
           "minimum": 60,
           "description": "Background refresh interval in seconds (minimum 60)."
+        },
+        "cursorUsageBars.dayRange": {
+          "type": "number",
+          "enum": [7, 15, 30],
+          "default": 7,
+          "description": "Default day range for the status-bar popup (7, 15, or 30). Overridden when you pick a range in the popup."
         },
         "cursorUsageBars.manualMonthlyLimitDollars": {
           "type": "number",
