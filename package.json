@@ -2,7 +2,7 @@
   "name": "cursor-usage-bars",
   "displayName": "Cursor Usage Bars",
   "description": "Status bar sparkline of Cursor spend with 7D / 15D / 30D popup range. Auto auth from Cursor login. Works in Local and Remote SSH.",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "publisher": "danieleliberti",
   "author": {
     "name": "Daniele Liberti"
