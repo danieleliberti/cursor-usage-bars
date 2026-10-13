@@ -9,10 +9,25 @@
     "vscode": "^1.85.0",
     "node": ">=20.19.0"
   },
-  "categories": ["Other"],
-  "keywords": ["cursor", "usage", "status bar", "spend", "tokens", "remote", "ssh"],
-  "activationEvents": ["onStartupFinished"],
-  "extensionKind": ["ui", "workspace"],
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "cursor",
+    "usage",
+    "status bar",
+    "spend",
+    "tokens",
+    "remote",
+    "ssh"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "extensionKind": [
+    "ui",
+    "workspace"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
@@ -70,7 +85,7 @@
     "clean": "node -e \"require('fs').rmSync('out',{recursive:true,force:true})\"",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "vsce package --allow-missing-repository"
+    "package": "vsce package"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
@@ -80,5 +95,11 @@
   },
   "dependencies": {
     "sql.js": "^1.11.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/danieleliberti/cursor-usage-bars.git"
+  },
+  "homepage": "https://github.com/danieleliberti/cursor-usage-bars",
+  "bugs": "https://github.com/danieleliberti/cursor-usage-bars/issues"
 }
