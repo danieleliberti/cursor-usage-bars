@@ -2,7 +2,7 @@
   "name": "cursor-usage-bars",
   "displayName": "Cursor Usage Bars",
   "description": "Status bar usage sparkline for Cursor (plan name, 7D/15D/30D tooltip, dashboard colors). By Daniele Liberti. Local + Remote SSH.",
-  "version": "0.4.8",
+  "version": "0.4.9",
   "publisher": "danieleliberti",
   "author": "Daniele Liberti",
   "license": "MIT",
