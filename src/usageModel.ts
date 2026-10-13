@@ -136,6 +136,15 @@ export function parseUsageSummary(json: unknown): ParsedUsageSummary {
     const total = num(plan.totalPercentUsed);
     if (total !== undefined) {
       planPercentUsed = total;
+    } else {
+      // Fallback: blend the two dashboard pools when headline % is missing.
+      const auto = num(plan.autoPercentUsed);
+      const api = num(plan.apiPercentUsed);
+      if (auto !== undefined && api !== undefined) {
+        planPercentUsed = (auto + api) / 2;
+      } else {
+        planPercentUsed = auto ?? api;
+      }
     }
   }
 

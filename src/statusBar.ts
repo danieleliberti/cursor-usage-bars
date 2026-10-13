@@ -65,14 +65,19 @@ export class UsageBarsStatusBar {
     const statusDays = snapshot.days.slice(-Math.min(7, snapshot.days.length));
     const bars = sparklineWithCycleMarker(statusDays, snapshot.periodStart);
     const plan = snapshot.planLabel ? `${snapshot.planLabel} ` : '';
+    const pct =
+      snapshot.planPercentUsed !== undefined && Number.isFinite(snapshot.planPercentUsed)
+        ? `${Math.round(snapshot.planPercentUsed)}% `
+        : '';
     const range = `${snapshot.dayRange}D `;
 
     if (snapshot.payingOutsidePlan) {
-      this.item.text = `$(alert) ${plan}${range}${bars} ${formatCentsUsd(snapshot.overageCents)} over`;
+      this.item.text = `$(alert) ${plan}${pct}${range}${bars} ${formatCentsUsd(snapshot.overageCents)} over`;
       this.item.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
       this.item.color = DashboardColors.onDemand;
     } else {
-      this.item.text = `$(pulse) ${plan}${range}${bars}`;
+      // e.g. "$(pulse) Pro+ 15% 7D ▃▅█"
+      this.item.text = `$(pulse) ${plan}${pct}${range}${bars}`;
       this.item.backgroundColor = undefined;
       // Match dashboard “default” / included green.
       this.item.color = DashboardColors.included;
