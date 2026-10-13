@@ -11,13 +11,20 @@ export type UsageSnapshot = {
   planLabel?: string;
   /** Raw membershipType from Cursor (e.g. "pro_plus"). */
   membershipType?: string;
-  /** Cycle-to-date chargeable spend in cents. */
+  /**
+   * Cycle-to-date usage value in cents from aggregated events.
+   * This is NOT the same as billed on-demand spend — included plan usage
+   * still has a dollar-equivalent here.
+   */
   cycleSpentCents?: number;
-  /** Per-user monthly cap in cents, when known. */
-  limitCents?: number;
-  /** True when cycle spend exceeds the included plan limit (on-demand / overage). */
+  /** True only when Cursor reports real on-demand / overage charges. */
   payingOutsidePlan: boolean;
+  /** Billed on-demand cents from usage-summary (0 when within included plan). */
   overageCents: number;
+  /** Whether on-demand spending is enabled on the account. */
+  onDemandEnabled?: boolean;
+  /** Included-plan usage headline % from the dashboard (0–100+), when known. */
+  planPercentUsed?: number;
   periodStart?: string;
   lastError?: string;
   lastUpdated: Date;
@@ -63,37 +70,70 @@ export function parseHardLimit(json: unknown): { limitCents?: number } {
   return { limitCents: dollars * 100 };
 }
 
-export function parseUsageSummary(json: unknown): {
+export type ParsedUsageSummary = {
   isUnlimited: boolean;
-  limitCents?: number;
   membershipType?: string;
-} {
+  /** Real billed on-demand spend in cents (dashboard “On-Demand”). */
+  onDemandEnabled: boolean;
+  onDemandUsedCents: number;
+  /** Dashboard headline % for included usage, when present. */
+  planPercentUsed?: number;
+};
+
+/**
+ * Source of truth for plan vs overage is usage-summary.onDemand — NOT
+ * comparing aggregated totalCostCents to plan.limit (those are different pools).
+ */
+export function parseUsageSummary(json: unknown): ParsedUsageSummary {
   if (!isRecord(json)) {
-    return { isUnlimited: false };
+    return { isUnlimited: false, onDemandEnabled: false, onDemandUsedCents: 0 };
   }
   const membershipType = str(json.membershipType);
   const isUnlimited = json.isUnlimited === true;
   const individual = isRecord(json.individualUsage) ? json.individualUsage : undefined;
-  const overall = individual && isRecord(individual.overall) ? individual.overall : undefined;
+  const team = isRecord(json.teamUsage) ? json.teamUsage : undefined;
   const plan = individual && isRecord(individual.plan) ? individual.plan : undefined;
+  const onDemand =
+    (individual && isRecord(individual.onDemand) ? individual.onDemand : undefined) ??
+    (team && isRecord(team.onDemand) ? team.onDemand : undefined);
 
-  let limitCents: number | undefined;
-  if (isRecord(overall) && overall.enabled !== false) {
-    const limit = num(overall.limit);
-    if (limit !== undefined && limit > 0) {
-      limitCents = limit;
+  const onDemandEnabled = isRecord(onDemand) ? onDemand.enabled === true : false;
+  const onDemandUsedCents =
+    isRecord(onDemand) && num(onDemand.used) !== undefined
+      ? Math.max(0, num(onDemand.used)!)
+      : 0;
+
+  let planPercentUsed: number | undefined;
+  if (isRecord(plan)) {
+    const total = num(plan.totalPercentUsed);
+    if (total !== undefined) {
+      planPercentUsed = total;
     }
   }
-  if (limitCents === undefined && isRecord(plan) && plan.enabled !== false) {
-    const limit = num(plan.limit);
-    if (limit !== undefined && limit > 0) {
-      limitCents = limit;
-    }
-  }
 
-  return limitCents !== undefined
-    ? { isUnlimited, limitCents, membershipType }
-    : { isUnlimited, membershipType };
+  return {
+    isUnlimited,
+    membershipType,
+    onDemandEnabled,
+    onDemandUsedCents,
+    planPercentUsed,
+  };
+}
+
+/** True only when the account has actual on-demand charges this cycle. */
+export function resolvePayingOutsidePlan(summary: ParsedUsageSummary | undefined): {
+  payingOutsidePlan: boolean;
+  overageCents: number;
+} {
+  if (!summary) {
+    return { payingOutsidePlan: false, overageCents: 0 };
+  }
+  // Disabled on-demand ⇒ nothing is billed beyond the subscription.
+  if (!summary.onDemandEnabled) {
+    return { payingOutsidePlan: false, overageCents: 0 };
+  }
+  const overageCents = Math.max(0, summary.onDemandUsedCents);
+  return { payingOutsidePlan: overageCents > 0, overageCents };
 }
 
 /** Map Cursor membershipType → dashboard-style label ("Pro+", "Ultra", …). */
@@ -133,24 +173,6 @@ export function parseAggregatedSpendCents(json: unknown): number | undefined {
   return num(json.totalCostCents) ?? 0;
 }
 
-export function resolveLimitCents(args: {
-  summary?: { isUnlimited: boolean; limitCents?: number };
-  hardLimit?: { limitCents?: number };
-  manualLimitDollars?: number;
-}): number | undefined {
-  const { summary, hardLimit, manualLimitDollars } = args;
-  if (manualLimitDollars !== undefined && manualLimitDollars > 0) {
-    return manualLimitDollars * 100;
-  }
-  if (summary?.isUnlimited) {
-    return undefined;
-  }
-  if (summary?.limitCents !== undefined) {
-    return summary.limitCents;
-  }
-  return hardLimit?.limitCents;
-}
-
 export function formatCentsUsd(cents: number): string {
   return new Intl.NumberFormat(undefined, {
     style: 'currency',
@@ -178,37 +200,20 @@ export const DashboardColors = {
 export type DayBillingKind = 'included' | 'mixed' | 'onDemand';
 
 /**
- * Classify each day in the 3-day window relative to the included plan limit,
- * approximating cycle spend before the window as cycleSpent − sum(days).
+ * Day colors follow the dashboard: green while within the included subscription.
+ * Only mark days on-demand when Cursor reports real on-demand charges this cycle.
+ * (Aggregated totalCostCents is usage value, not a bill — do not compare it to plan.limit.)
  */
 export function classifyDayBilling(
   days: DaySpend[],
-  cycleSpentCents: number | undefined,
-  limitCents: number | undefined
+  payingOutsidePlan: boolean
 ): DayBillingKind[] {
-  if (
-    limitCents === undefined ||
-    cycleSpentCents === undefined ||
-    cycleSpentCents <= limitCents
-  ) {
+  if (!payingOutsidePlan) {
     return days.map(() => 'included');
   }
-
-  const windowSpend = days.reduce((sum, d) => sum + Math.max(0, d.cents), 0);
-  let spentBefore = Math.max(0, cycleSpentCents - windowSpend);
-
-  return days.map((d) => {
-    const start = spentBefore;
-    const end = spentBefore + Math.max(0, d.cents);
-    spentBefore = end;
-    if (end <= limitCents) {
-      return 'included';
-    }
-    if (start >= limitCents) {
-      return 'onDemand';
-    }
-    return 'mixed';
-  });
+  // With on-demand active we still treat recent daily value as mixed (included + on-demand),
+  // not as pure yellow “over” — the billed amount is shown separately as overage.
+  return days.map(() => 'mixed');
 }
 
 export function colorForDayBilling(kind: DayBillingKind): string {

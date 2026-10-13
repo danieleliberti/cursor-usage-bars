@@ -52,24 +52,20 @@ export class UsageBarsStatusBar {
 
   update(snapshot: UsageSnapshot): void {
     const cents = snapshot.days.map((d) => d.cents);
-    const kinds = classifyDayBilling(
-      snapshot.days,
-      snapshot.cycleSpentCents,
-      snapshot.limitCents
-    );
+    const kinds = classifyDayBilling(snapshot.days, snapshot.payingOutsidePlan);
     const bars = sparkline(cents);
     const plan = snapshot.planLabel ? `${snapshot.planLabel} ` : '';
 
     if (snapshot.payingOutsidePlan) {
-      // Price only when charging outside the included plan (on-demand / overage).
+      // Real on-demand charges only (from usage-summary.onDemand).
       this.item.text = `$(alert) ${plan}${bars} ${formatCentsUsd(snapshot.overageCents)} over`;
       this.item.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
       this.item.color = DashboardColors.onDemand;
     } else {
-      // Within subscription: plan + sparkline — never show a dollar amount on the bar.
+      // Within subscription: green sparkline, plan name, no dollar amount.
       this.item.text = `$(pulse) ${plan}${bars}`;
       this.item.backgroundColor = undefined;
-      this.item.color = this.statusBarColor(kinds);
+      this.item.color = DashboardColors.included;
     }
 
     this.item.tooltip = this.buildTooltip(snapshot, kinds);
@@ -90,20 +86,12 @@ export class UsageBarsStatusBar {
     }
     this.lastAlertKey = key;
     const choice = await vscode.window.showWarningMessage(
-      `Cursor: stai pagando fuori dal piano incluso (${formatCentsUsd(snapshot.overageCents)} overage).`,
-      'Apri Usage Dashboard'
+      `Cursor: on-demand charges this cycle (${formatCentsUsd(snapshot.overageCents)}).`,
+      'Open Usage Dashboard'
     );
-    if (choice === 'Apri Usage Dashboard') {
+    if (choice === 'Open Usage Dashboard') {
       await vscode.commands.executeCommand(OPEN_CMD);
     }
-  }
-
-  private statusBarColor(kinds: DayBillingKind[]): string {
-    if (kinds.some((k) => k === 'onDemand' || k === 'mixed')) {
-      return DashboardColors.onDemand;
-    }
-    // Match Spending / Usage included accent when fully in-plan.
-    return DashboardColors.included;
   }
 
   private buildTooltip(snapshot: UsageSnapshot, kinds: DayBillingKind[]): vscode.MarkdownString {
@@ -113,10 +101,10 @@ export class UsageBarsStatusBar {
 
     if (snapshot.planLabel) {
       md.appendMarkdown(
-        `**Piano:** <span style="color:${DashboardColors.usageAccent};">${escapeHtml(snapshot.planLabel)}</span>\n\n`
+        `**Plan:** <span style="color:${DashboardColors.included};">${escapeHtml(snapshot.planLabel)}</span>\n\n`
       );
     }
-    md.appendMarkdown('**Cursor usage (ultimi 3 giorni)**\n\n');
+    md.appendMarkdown('**Cursor usage (last 3 days)**\n\n');
 
     const segments = sparklineSegments(
       snapshot.days.map((d) => d.cents),
@@ -131,47 +119,35 @@ export class UsageBarsStatusBar {
 
     snapshot.days.forEach((d, i) => {
       const kind = kinds[i] ?? 'included';
-      const color =
-        kind === 'included'
-          ? DashboardColors.included
-          : kind === 'onDemand'
-            ? DashboardColors.onDemand
-            : DashboardColors.usageAccent;
-      const mark = d.ok ? '' : ' <i>(errore)</i>';
+      const color = kind === 'included' ? DashboardColors.included : DashboardColors.usageAccent;
+      const mark = d.ok ? '' : ' <i>(error)</i>';
       const price = escapeHtml(formatCentsUsd(d.cents));
-      // In-plan days: price in dashboard green (never treated as a charge label).
+      // Included-plan days: green (usage value, not an extra charge).
       md.appendMarkdown(
         `- <code>${escapeHtml(d.date)}</code>: <span style="color:${color};"><b>${price}</b></span>${mark}\n`
       );
     });
 
-    if (snapshot.cycleSpentCents !== undefined) {
-      const cycleColor = snapshot.payingOutsidePlan
-        ? DashboardColors.onDemand
-        : DashboardColors.included;
+    if (snapshot.planPercentUsed !== undefined) {
       md.appendMarkdown(
-        `\nCiclo corrente: <span style="color:${cycleColor};"><b>${escapeHtml(formatCentsUsd(snapshot.cycleSpentCents))}</b></span>`
+        `\nIncluded usage: <span style="color:${DashboardColors.included};"><b>${escapeHtml(String(Math.round(snapshot.planPercentUsed)))}%</b></span>\n`
       );
-      if (snapshot.limitCents !== undefined) {
-        md.appendMarkdown(` / <b>${escapeHtml(formatCentsUsd(snapshot.limitCents))}</b>`);
-      }
-      md.appendMarkdown('\n');
     }
 
     if (snapshot.payingOutsidePlan) {
       md.appendMarkdown(
-        `\n⚠️ **Overage:** <span style="color:${DashboardColors.onDemand};">${escapeHtml(formatCentsUsd(snapshot.overageCents))}</span> oltre il piano incluso.\n`
+        `\n⚠️ **On-demand:** <span style="color:${DashboardColors.onDemand};">${escapeHtml(formatCentsUsd(snapshot.overageCents))}</span> billed beyond included plan.\n`
       );
     } else {
-      md.appendMarkdown('\n_Entro il piano incluso — nessun addebito extra._\n');
+      md.appendMarkdown('\n_Within included plan — no on-demand charges._\n');
     }
 
     if (snapshot.lastError) {
-      md.appendMarkdown(`\n_Errore parziale:_ ${escapeHtml(snapshot.lastError)}\n`);
+      md.appendMarkdown(`\n_Partial error:_ ${escapeHtml(snapshot.lastError)}\n`);
     }
 
-    md.appendMarkdown(`\nAggiornato: ${escapeHtml(snapshot.lastUpdated.toLocaleString())}\n`);
-    md.appendMarkdown('\n[Apri dashboard usage](command:cursorUsageBars.openDashboard)');
+    md.appendMarkdown(`\nUpdated: ${escapeHtml(snapshot.lastUpdated.toLocaleString())}\n`);
+    md.appendMarkdown('\n[Open usage dashboard](command:cursorUsageBars.openDashboard)');
     return md;
   }
 }
