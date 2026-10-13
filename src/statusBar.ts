@@ -4,9 +4,9 @@ import {
   DashboardColors,
   chartLegendHtml,
   dayBarValue,
+  dayColumnHtml,
   formatCentsUsd,
-  renderBaselineChartMarkdown,
-  renderFallbackSparklineHtml,
+  renderColoredColumnsHtml,
   sparkline,
   type DayRange,
   type UsageSnapshot,
@@ -119,26 +119,23 @@ export class UsageBarsStatusBar {
     md.appendMarkdown(`**Range:** ${rangeLinks}\n\n`);
     md.appendMarkdown(`**Your Usage (last ${snapshot.dayRange} days)**\n\n`);
 
-    // SVG data-URI chart (HTML tables are stripped in VS Code tooltips).
-    const chart = renderBaselineChartMarkdown(snapshot.days);
-    if (chart) {
-      md.appendMarkdown(`${chart}\n\n`);
-    }
-    // Always-visible text fallback (same baseline glyphs + model colors).
-    const fallback = renderFallbackSparklineHtml(snapshot.days);
-    if (fallback) {
-      md.appendMarkdown(`${fallback}\n\n`);
+    // Colored columns only (no images) — dashboard model palette.
+    const columns = renderColoredColumnsHtml(snapshot.days);
+    if (columns) {
+      md.appendMarkdown(`${columns}\n\n`);
     }
     const legend = chartLegendHtml(snapshot.days);
     if (legend) {
       md.appendMarkdown(`${legend}\n\n`);
     }
 
+    const maxValue = Math.max(...snapshot.days.map(dayBarValue), 0);
     snapshot.days.forEach((d) => {
       const mark = d.ok ? '' : ' <i>(error)</i>';
       const costLabel = snapshot.payingOutsidePlan
         ? escapeHtml(formatCentsUsd(d.cents))
         : '<span style="color:#009957;"><b>Included</b></span>';
+      const col = dayColumnHtml(d, maxValue);
       const models =
         d.slices.length > 0
           ? d.slices
@@ -149,7 +146,7 @@ export class UsageBarsStatusBar {
               .join(' · ')
           : '';
       md.appendMarkdown(
-        `- <code>${escapeHtml(d.date)}</code>: ${costLabel}${mark}${models ? `<br/>&nbsp;&nbsp;${models}` : ''}\n`
+        `- ${col} <code>${escapeHtml(d.date)}</code>: ${costLabel}${mark}${models ? `<br/>&nbsp;&nbsp;&nbsp;&nbsp;${models}` : ''}\n`
       );
     });
 
