@@ -1,7 +1,19 @@
+/** One model slice inside a day's stacked bar (dashboard “Group by: Model”). */
+export type ModelSlice = {
+  model: string;
+  tokens: number;
+  cents: number;
+  color: string;
+};
+
 export type DaySpend = {
   date: string;
-  /** Chargeable cents for that day (0 if none / missing totalCostCents). */
+  /** Dollar-equivalent cents for that day (API totalCostCents). */
   cents: number;
+  /** Token total for that day (preferred for bar height, matches dashboard). */
+  tokens: number;
+  /** Per-model slices for stacked bars. */
+  slices: ModelSlice[];
   ok: boolean;
 };
 
@@ -185,6 +197,112 @@ export function parseAggregatedSpendCents(json: unknown): number | undefined {
   return num(json.totalCostCents) ?? 0;
 }
 
+function tokenFieldsSum(rec: Record<string, unknown>): number {
+  const parts = [
+    num(rec.inputTokens) ?? num(rec.totalInputTokens),
+    num(rec.outputTokens) ?? num(rec.totalOutputTokens),
+    num(rec.cacheWriteTokens) ?? num(rec.totalCacheWriteTokens),
+    num(rec.cacheReadTokens) ?? num(rec.totalCacheReadTokens),
+    num(rec.totalTokens),
+  ];
+  const sum = parts.reduce<number>((acc, n) => acc + (n ?? 0), 0);
+  return sum > 0 ? sum : 0;
+}
+
+/**
+ * Colors sampled live from https://cursor.com/dashboard/usage legend swatches.
+ * Order matches the dashboard chart palette.
+ */
+export const MODEL_COLOR_PALETTE = [
+  '#009957', // default
+  '#FFCB78', // grok-4.7-high
+  '#1084FE', // cursor-grok-4.6-high
+  '#78DBD0', // cursor-grok-4.6-high-fast
+  '#9159FE', // composer-2.5-fast
+  '#F59E0B',
+  '#EC4899',
+  '#14B8A6',
+] as const;
+
+const KNOWN_MODEL_COLORS: Array<{ match: RegExp; color: string }> = [
+  { match: /^(default|auto)$/i, color: '#009957' },
+  { match: /grok-4\.7/i, color: '#FFCB78' },
+  { match: /cursor-grok-4\.6.*fast/i, color: '#78DBD0' },
+  { match: /cursor-grok-4\.6/i, color: '#1084FE' },
+  { match: /composer/i, color: '#9159FE' },
+  { match: /grok/i, color: '#FFCB78' },
+];
+
+export function colorForModel(model: string, fallbackIndex = 0): string {
+  const name = model.trim() || 'default';
+  for (const rule of KNOWN_MODEL_COLORS) {
+    if (rule.match.test(name)) {
+      return rule.color;
+    }
+  }
+  return MODEL_COLOR_PALETTE[Math.abs(fallbackIndex) % MODEL_COLOR_PALETTE.length]!;
+}
+
+export function parseAggregatedDay(
+  date: string,
+  json: unknown,
+  ok: boolean
+): DaySpend {
+  if (!ok || !isRecord(json)) {
+    return { date, cents: 0, tokens: 0, slices: [], ok: false };
+  }
+
+  const cents = num(json.totalCostCents) ?? 0;
+  let tokens = tokenFieldsSum(json);
+
+  const slices: ModelSlice[] = [];
+  const aggregations = Array.isArray(json.aggregations) ? json.aggregations : [];
+  aggregations.forEach((row, i) => {
+    if (!isRecord(row)) {
+      return;
+    }
+    const model =
+      str(row.modelIntent) ??
+      str(row.model) ??
+      str(row.modelName) ??
+      str(row.name) ??
+      `model-${i + 1}`;
+    const sliceCents = num(row.totalCents) ?? num(row.totalCostCents) ?? 0;
+    let sliceTokens = tokenFieldsSum(row);
+    if (sliceTokens <= 0 && sliceCents > 0) {
+      sliceTokens = sliceCents;
+    }
+    if (sliceTokens <= 0 && sliceCents <= 0) {
+      return;
+    }
+    slices.push({
+      model,
+      tokens: sliceTokens,
+      cents: sliceCents,
+      color: colorForModel(model, i),
+    });
+  });
+
+  if (tokens <= 0 && slices.length) {
+    tokens = slices.reduce((s, x) => s + x.tokens, 0);
+  }
+  if (tokens <= 0 && cents > 0) {
+    tokens = cents;
+  }
+
+  // If API gave totals but no per-model rows, one solid bar in dashboard green.
+  if (!slices.length && (tokens > 0 || cents > 0)) {
+    slices.push({
+      model: 'default',
+      tokens: tokens || cents,
+      cents,
+      color: colorForModel('default'),
+    });
+  }
+
+  return { date, cents, tokens, slices, ok: true };
+}
+
 export function formatCentsUsd(cents: number): string {
   return new Intl.NumberFormat(undefined, {
     style: 'currency',
@@ -194,52 +312,116 @@ export function formatCentsUsd(cents: number): string {
   }).format(cents / 100);
 }
 
-/**
- * Colors sampled from https://cursor.com/dashboard/usage (chart legend)
- * and Spending progress fill `--color-dashboard-usage-accent`.
- */
 export const DashboardColors = {
-  /** Usage chart "default" / included-leaning green */
   included: '#009957',
-  /** Usage chart warm accent (grok-4.7-high) — used for on-demand / overage */
   onDemand: '#FFCB78',
-  /** Spending progress fill: rgb(129, 161, 193) */
   usageAccent: '#81A1C1',
-  /** Usage chart cursor-grok blue */
   cursorModel: '#1084FE',
+  track: '#E8E8E8',
 } as const;
 
-export type DayBillingKind = 'included' | 'mixed' | 'onDemand';
+/** Metric used for bar height — tokens when present (dashboard), else cents. */
+export function dayBarValue(d: DaySpend): number {
+  return d.tokens > 0 ? d.tokens : Math.max(0, d.cents);
+}
 
 /**
- * Day colors follow the dashboard: green while within the included subscription.
- * Only mark days on-demand when Cursor reports real on-demand charges this cycle.
- * (Aggregated totalCostCents is usage value, not a bill — do not compare it to plan.limit.)
+ * HTML chart: every column shares the same baseline (valign=bottom),
+ * stacked model colors like cursor.com/dashboard/usage.
  */
-export function classifyDayBilling(
-  days: DaySpend[],
-  payingOutsidePlan: boolean
-): DayBillingKind[] {
-  if (!payingOutsidePlan) {
-    return days.map(() => 'included');
+export function renderBaselineChartHtml(days: DaySpend[], chartHeight = 56): string {
+  if (days.length === 0) {
+    return '';
   }
-  // With on-demand active we still treat recent daily value as mixed (included + on-demand),
-  // not as pure yellow “over” — the billed amount is shown separately as overage.
-  return days.map(() => 'mixed');
+  const max = Math.max(...days.map(dayBarValue), 1);
+  const colWidth = days.length > 20 ? 5 : days.length > 12 ? 7 : 9;
+
+  const cells = days
+    .map((d) => {
+      const value = dayBarValue(d);
+      const barH = value <= 0 ? 0 : Math.max(3, Math.round((value / max) * chartHeight));
+      const spacerH = chartHeight - barH;
+
+      const slices =
+        d.slices.length > 0
+          ? d.slices
+          : [
+              {
+                model: 'default',
+                tokens: value,
+                cents: d.cents,
+                color: colorForModel('default'),
+              },
+            ];
+      const sliceTotal =
+        slices.reduce((s, x) => s + (d.tokens > 0 ? x.tokens : x.cents || x.tokens), 0) || 1;
+
+      // Stack bottom → top (first aggregation at the baseline).
+      let used = 0;
+      const segRows = slices
+        .map((sl, i) => {
+          const portion = (d.tokens > 0 ? sl.tokens : sl.cents || sl.tokens) / sliceTotal;
+          let segH =
+            i === slices.length - 1
+              ? Math.max(0, barH - used)
+              : Math.max(portion > 0 ? 1 : 0, Math.round(portion * barH));
+          used += segH;
+          if (segH <= 0) {
+            return '';
+          }
+          return `<tr><td style="height:${segH}px;width:${colWidth}px;background-color:${sl.color};font-size:0;line-height:0;padding:0;margin:0;">&nbsp;</td></tr>`;
+        })
+        .join('');
+
+      const spacer =
+        spacerH > 0
+          ? `<tr><td style="height:${spacerH}px;width:${colWidth}px;font-size:0;line-height:0;padding:0;">&nbsp;</td></tr>`
+          : '';
+
+      return `<td style="vertical-align:bottom;padding:0 1px;height:${chartHeight}px;">` +
+        `<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;height:${chartHeight}px;">` +
+        spacer +
+        segRows +
+        `</table></td>`;
+    })
+    .join('');
+
+  return (
+    `<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;border-bottom:1px solid ${DashboardColors.track};">` +
+    `<tr style="vertical-align:bottom;">${cells}</tr></table>`
+  );
 }
 
-export function colorForDayBilling(kind: DayBillingKind): string {
-  switch (kind) {
-    case 'included':
-      return DashboardColors.included;
-    case 'onDemand':
-      return DashboardColors.onDemand;
-    case 'mixed':
-      return DashboardColors.usageAccent;
+export function chartLegendHtml(days: DaySpend[]): string {
+  const seen = new Map<string, string>();
+  for (const d of days) {
+    for (const s of d.slices) {
+      if (!seen.has(s.model)) {
+        seen.set(s.model, s.color);
+      }
+    }
   }
+  if (seen.size === 0) {
+    return '';
+  }
+  return [...seen.entries()]
+    .slice(0, 8)
+    .map(
+      ([model, color]) =>
+        `<span style="color:${color};">■</span>&nbsp;${escapeHtmlLite(model)}`
+    )
+    .join('&nbsp;&nbsp;');
 }
 
-/** Unicode block sparkline — 8 levels. */
+function escapeHtmlLite(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/** Unicode block sparkline for the status bar (single color; shared glyph baseline). */
 const BARS = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'] as const;
 
 export function sparkline(values: number[]): string {
@@ -248,35 +430,18 @@ export function sparkline(values: number[]): string {
   }
   const max = Math.max(...values, 0);
   if (max <= 0) {
+    // Same glyph for every empty day so the baseline reads flat.
     return values.map(() => BARS[0]).join('');
   }
   return values
     .map((v) => {
-      const ratio = Math.max(0, v) / max;
-      const idx = Math.min(BARS.length - 1, Math.round(ratio * (BARS.length - 1)));
+      if (v <= 0) {
+        return BARS[0];
+      }
+      const ratio = v / max;
+      // Avoid rounding everything toward mid glyphs; keep a true shared floor.
+      const idx = Math.max(1, Math.min(BARS.length - 1, Math.round(ratio * (BARS.length - 1))));
       return BARS[idx];
     })
     .join('');
-}
-
-/** Per-day colored sparkline segments (for HTML tooltips). */
-export function sparklineSegments(
-  values: number[],
-  kinds: DayBillingKind[]
-): Array<{ bar: string; color: string }> {
-  if (values.length === 0) {
-    return [];
-  }
-  const max = Math.max(...values, 0);
-  return values.map((v, i) => {
-    let bar: string;
-    if (max <= 0) {
-      bar = BARS[0];
-    } else {
-      const ratio = Math.max(0, v) / max;
-      const idx = Math.min(BARS.length - 1, Math.round(ratio * (BARS.length - 1)));
-      bar = BARS[idx];
-    }
-    return { bar, color: colorForDayBilling(kinds[i] ?? 'included') };
-  });
 }

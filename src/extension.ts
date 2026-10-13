@@ -4,6 +4,7 @@ import { fetchUsageBundle } from './usageClient';
 import {
   DAY_RANGES,
   formatMembershipLabel,
+  parseAggregatedDay,
   parseAggregatedSpendCents,
   parseAuthUsage,
   parseDayRange,
@@ -181,16 +182,9 @@ async function refreshUsageInner(): Promise<void> {
   const dayRange = getDayRange(extensionContext);
   const bundle = await fetchUsageBundle(c.apiBaseUrl, resolved.token, teamId, now, dayRange);
 
-  const days: DaySpend[] = bundle.days.map(({ window, result }) => {
-    if (!result.ok) {
-      return { date: window.date, cents: 0, ok: false };
-    }
-    return {
-      date: window.date,
-      cents: parseAggregatedSpendCents(result.json) ?? 0,
-      ok: true,
-    };
-  });
+  const days: DaySpend[] = bundle.days.map(({ window, result }) =>
+    parseAggregatedDay(window.date, result.ok ? result.json : undefined, result.ok)
+  );
 
   const auth = bundle.auth.ok ? parseAuthUsage(bundle.auth.json) : {};
   const summary = bundle.summary.ok ? parseUsageSummary(bundle.summary.json) : undefined;

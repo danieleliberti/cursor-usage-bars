@@ -2,11 +2,11 @@ import * as vscode from 'vscode';
 import {
   DAY_RANGES,
   DashboardColors,
-  classifyDayBilling,
+  chartLegendHtml,
+  dayBarValue,
   formatCentsUsd,
+  renderBaselineChartHtml,
   sparkline,
-  sparklineSegments,
-  type DayBillingKind,
   type DayRange,
   type UsageSnapshot,
 } from './usageModel';
@@ -58,11 +58,9 @@ export class UsageBarsStatusBar {
   }
 
   update(snapshot: UsageSnapshot): void {
-    const cents = snapshot.days.map((d) => d.cents);
-    const kinds = classifyDayBilling(snapshot.days, snapshot.payingOutsidePlan);
-    // Keep the status bar compact: sparkline of the last up to 7 days.
-    const statusCents = cents.slice(-Math.min(7, cents.length));
-    const bars = sparkline(statusCents);
+    const values = snapshot.days.map(dayBarValue);
+    const statusValues = values.slice(-Math.min(7, values.length));
+    const bars = sparkline(statusValues);
     const plan = snapshot.planLabel ? `${snapshot.planLabel} ` : '';
     const range = `${snapshot.dayRange}D `;
 
@@ -73,10 +71,11 @@ export class UsageBarsStatusBar {
     } else {
       this.item.text = `$(pulse) ${plan}${range}${bars}`;
       this.item.backgroundColor = undefined;
+      // Match dashboard “default” / included green.
       this.item.color = DashboardColors.included;
     }
 
-    this.item.tooltip = this.buildTooltip(snapshot, kinds);
+    this.item.tooltip = this.buildTooltip(snapshot);
   }
 
   async maybeAlertOverage(snapshot: UsageSnapshot): Promise<void> {
@@ -98,7 +97,7 @@ export class UsageBarsStatusBar {
     }
   }
 
-  private buildTooltip(snapshot: UsageSnapshot, kinds: DayBillingKind[]): vscode.MarkdownString {
+  private buildTooltip(snapshot: UsageSnapshot): vscode.MarkdownString {
     const md = new vscode.MarkdownString(undefined, true);
     md.isTrusted = true;
     md.supportHtml = true;
@@ -117,26 +116,34 @@ export class UsageBarsStatusBar {
       return `[${label}](${rangeCommandUri(d)})`;
     }).join(' · ');
     md.appendMarkdown(`**Range:** ${rangeLinks}\n\n`);
-    md.appendMarkdown(`**Cursor usage (last ${snapshot.dayRange} days)**\n\n`);
+    md.appendMarkdown(`**Your Usage (last ${snapshot.dayRange} days)**\n\n`);
 
-    const segments = sparklineSegments(
-      snapshot.days.map((d) => d.cents),
-      kinds
-    );
-    if (segments.length) {
-      const coloredBars = segments
-        .map((s) => `<span style="color:${s.color};">${escapeHtml(s.bar)}</span>`)
-        .join('');
-      md.appendMarkdown(`${coloredBars}\n\n`);
+    // Shared-baseline stacked bars — colors from cursor.com/dashboard/usage legend.
+    const chart = renderBaselineChartHtml(snapshot.days);
+    if (chart) {
+      md.appendMarkdown(`${chart}\n\n`);
+    }
+    const legend = chartLegendHtml(snapshot.days);
+    if (legend) {
+      md.appendMarkdown(`${legend}\n\n`);
     }
 
-    snapshot.days.forEach((d, i) => {
-      const kind = kinds[i] ?? 'included';
-      const color = kind === 'included' ? DashboardColors.included : DashboardColors.usageAccent;
+    snapshot.days.forEach((d) => {
       const mark = d.ok ? '' : ' <i>(error)</i>';
-      const price = escapeHtml(formatCentsUsd(d.cents));
+      const costLabel = snapshot.payingOutsidePlan
+        ? escapeHtml(formatCentsUsd(d.cents))
+        : '<span style="color:#009957;"><b>Included</b></span>';
+      const models =
+        d.slices.length > 0
+          ? d.slices
+              .map(
+                (s) =>
+                  `<span style="color:${s.color};">■</span>&nbsp;${escapeHtml(s.model)}`
+              )
+              .join(' · ')
+          : '';
       md.appendMarkdown(
-        `- <code>${escapeHtml(d.date)}</code>: <span style="color:${color};"><b>${price}</b></span>${mark}\n`
+        `- <code>${escapeHtml(d.date)}</code>: ${costLabel}${mark}${models ? `<br/>&nbsp;&nbsp;${models}` : ''}\n`
       );
     });
 
