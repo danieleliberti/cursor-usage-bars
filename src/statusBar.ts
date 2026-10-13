@@ -69,18 +69,28 @@ export class UsageBarsStatusBar {
       snapshot.planPercentUsed !== undefined && Number.isFinite(snapshot.planPercentUsed)
         ? `${Math.round(snapshot.planPercentUsed)}% `
         : '';
+    const forecastIcon = snapshot.forecast ? `$(${snapshot.forecast.icon}) ` : '$(pulse) ';
+    const forecastPct =
+      snapshot.forecast && Number.isFinite(snapshot.forecast.projectedPercent)
+        ? `~${Math.round(snapshot.forecast.projectedPercent)}% `
+        : '';
     const range = `${snapshot.dayRange}D `;
 
     if (snapshot.payingOutsidePlan) {
-      this.item.text = `$(alert) ${plan}${pct}${range}${bars} ${formatCentsUsd(snapshot.overageCents)} over`;
+      this.item.text = `$(alert) ${plan}${pct}${forecastIcon}${forecastPct}${range}${bars} ${formatCentsUsd(snapshot.overageCents)} over`;
       this.item.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
       this.item.color = DashboardColors.onDemand;
     } else {
-      // e.g. "$(pulse) Pro+ 15% 7D ▃▅█"
-      this.item.text = `$(pulse) ${plan}${pct}${range}${bars}`;
+      // e.g. "Pro+ 15% $(trending-down) ~40% 7D ▃▅█"
+      this.item.text = `${forecastIcon}${plan}${pct}${forecastPct}${range}${bars}`;
       this.item.backgroundColor = undefined;
-      // Match dashboard “default” / included green.
-      this.item.color = DashboardColors.included;
+      if (snapshot.forecast?.pace === 'over') {
+        this.item.color = DashboardColors.onDemand;
+      } else if (snapshot.forecast?.pace === 'under') {
+        this.item.color = DashboardColors.included;
+      } else {
+        this.item.color = DashboardColors.usageAccent;
+      }
     }
 
     this.item.tooltip = this.buildTooltip(snapshot);
@@ -109,6 +119,7 @@ export class UsageBarsStatusBar {
     const md = new vscode.MarkdownString(undefined, true);
     md.isTrusted = true;
     md.supportHtml = true;
+    md.supportThemeIcons = true;
 
     if (snapshot.planLabel) {
       md.appendMarkdown(
@@ -172,6 +183,25 @@ export class UsageBarsStatusBar {
       md.appendMarkdown(
         `\nIncluded usage: <span style="color:${DashboardColors.included};"><b>${escapeHtml(String(Math.round(snapshot.planPercentUsed)))}%</b></span>\n`
       );
+    }
+
+    if (snapshot.forecast) {
+      const f = snapshot.forecast;
+      const paceLabel =
+        f.pace === 'over' ? 'ahead of pace' : f.pace === 'under' ? 'under pace' : 'on pace';
+      const paceColor =
+        f.pace === 'over'
+          ? DashboardColors.onDemand
+          : f.pace === 'under'
+            ? DashboardColors.included
+            : DashboardColors.usageAccent;
+      md.appendMarkdown(
+        `\n**Forecast at plan end:** $(${f.icon}) <span style="color:${paceColor};"><b>~${escapeHtml(String(Math.round(f.projectedPercent)))}%</b></span> _(${paceLabel})_`
+      );
+      if (snapshot.periodEnd) {
+        md.appendMarkdown(` — resets ${escapeHtml(snapshot.periodEnd.slice(0, 10))}`);
+      }
+      md.appendMarkdown('\n');
     }
 
     if (snapshot.payingOutsidePlan) {
